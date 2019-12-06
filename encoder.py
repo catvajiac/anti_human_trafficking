@@ -23,18 +23,19 @@ def pairwise(line):
 
 
 def process_file(filename):
-    data = []
+    data = {}
     regexes = []
     with open(filename, 'r') as f:
         for line in f:
-            string, regex = line.split('|')
-            data.append(string)
+            strings = line.split('|')
+            regex = strings.pop()
+            data[regex] = strings
             regexes.append([pair for pair in pairwise(regex)])
 
     return data, regexes
 
 
-def encode_regex(string, regex):
+def encode_regex(regex):
     # <id> <len> <str>
     # make bitstring to determine length
     bitstring = gamma.encoder(len(regex))
@@ -60,12 +61,13 @@ def reconstruct_string(regexes, disjunctions):
 def decoder(bitstring):
     # format to decode:
     # <# regex pieces (n)> <id_0> <len_0> <regex_0> ... <id_n-1> <len_n-1> <regex_n-1>
-    # <# disjunctions (m)> <len_0> <disjunction_0> ... <len_m=1> <disjunction_m-1>
+    # <# strings> <# disjunctions (m)> <len_0> <disjunction_0> ... <len_m=1> <disjunction_m-1>
     nums = gamma.decode_stream(bitstring) # returns list of integers
     regexes, nums = decode_regex(nums)
     disjunctions = decode_disjunctions(nums)
-
-    string = reconstruct_string(regexes, disjunctions.copy())
+    string = []
+    for disjunction in disjunctions:
+        string.append(reconstruct_string(regexes, disjunction.copy()))
 
     return regexes, disjunctions, string
 
@@ -83,14 +85,18 @@ def decode_regex(nums):
 
 
 def decode_disjunctions(nums):
-    num_disjunctions = nums.pop(0)
-    disjunctions = []
-    for _ in range(num_disjunctions):
-        disjunction_length = nums.pop(0)
-        disjunction = ''.join([chr(nums.pop(0)) for _ in range(disjunction_length)])
-        disjunctions.append(disjunction)
+    num_strings = nums.pop(0)
+    all_strings_disjunctions = []
+    for _ in range(num_strings):
+        num_disjunctions = nums.pop(0)
+        disjunctions = []
+        for _ in range(num_disjunctions):
+            disjunction_length = nums.pop(0)
+            disjunction = ''.join([chr(nums.pop(0)) for _ in range(disjunction_length)])
+            disjunctions.append(disjunction)
+        all_strings_disjunctions.append(disjunctions)
 
-    return disjunctions
+    return all_strings_disjunctions
 
 
 def find_disjunctions(string, regex):
@@ -110,18 +116,20 @@ def find_disjunctions(string, regex):
     return disjunctions
 
 
-def encode_error(string, regex):
-    disjunctions = find_disjunctions(string, regex)
-    bitstring = gamma.encoder(len(disjunctions))
-    for d in disjunctions:
-        to_compress = [len(d)] + list([ord(s) for s in d])
-        bitstring += ''.join(map(gamma.encoder, to_compress))
+def encode_error(strings, regex):
+    bitstring = gamma.encoder(len(strings))
+    for string in strings:
+        disjunctions = find_disjunctions(string, regex)
+        bitstring += gamma.encoder(len(disjunctions))
+        for d in disjunctions:
+            to_compress = [len(d)] + list([ord(s) for s in d])
+            bitstring += ''.join(map(gamma.encoder, to_compress))
 
     return bitstring
 
 
 def encoder(string, regex):
-    return encode_regex(string, regex) + encode_error(string, regex)
+    return encode_regex(regex) + encode_error(string, regex)
 
 
 def MDL(string, regex):
@@ -135,13 +143,8 @@ if __name__ == "__main__":
     filename = sys.argv[1]
     data, regexes = process_file(filename)
 
-    for regex, string in zip(regexes, data):
-        bits = encode_regex(string, regex)
-        disjunction = encode_error(string, regex)
-        #print(len(bits) + len(disjunction))
-
-        regexes, disjunctions, string = decoder(encoder(string, regex))
-        #print(regexes)
-        #print(disjunctions)
-        #print(string)
+    for regex, (_, strings) in zip(regexes, data.items()):
+        bits = encode_regex(regex)
+        disjunction = encode_error(strings, regex)
+        regexes, disjunctions, string = decoder(encoder(strings, regex))
         print(MDL(string, regex), 'bytes')
