@@ -22,18 +22,19 @@ def read_data(filename):
     ''' Assume data format is edge list split by newlines, autoconverts labels to integers '''
     with open(filename, 'r') as f:
         edges = [tuple(line.strip().split()) for line in f]
-    graph = nx.Graph(edges)
-    #graph = nx.convert_node_labels_to_integers(graph)
+    graph = nx.DiGraph(edges)
+    graph = nx.convert_node_labels_to_integers(graph)
     return graph
 
 
 def svd(graph, filename):
     ''' returns tuple: (u, s, v) '''
-    print('Running SVD...')
     svd_pkl_filename = '{}/{}_svd.pkl'.format(PKL_PATH, filename)
     if os.path.exists(svd_pkl_filename):
+        print('Using SVD pkl file...')
         return pickle.load(open(svd_pkl_filename, 'rb'))
 
+    print('Running SVD...')
     array = nx.to_numpy_matrix(graph)
     u, s, v = np.linalg.svd(array)
     u = np.array(u)
@@ -54,7 +55,7 @@ def find_spoke(scores, graph, metric=modularity):
     visited = set()
 
     key = lambda tup: tup[1]
-    i, x = min(scores, key=key)
+    i, x = max(scores, key=key)
     neighbors = SortedList([(n, nodes_to_scores[n]) for n in  graph.neighbors(i)], key=key)
     spoke = set([i])
 
@@ -73,21 +74,22 @@ def find_spoke(scores, graph, metric=modularity):
                 continue
             neighbors.add((neighbor, nodes_to_scores[neighbor]))
 
-    return spoke
+    return list(spoke)
 
 
 def find_spokes(graph, u, filename):
     ''' Find spokes - for now just looks at top 9 eigenvectors for ease of plotting later '''
-    print('Finding spokes...')
     spokes_pkl_filename = '{}/{}_spokes.pkl'.format(PKL_PATH, filename)
     if os.path.exists(spokes_pkl_filename):
+        print('Using spokes pkl file...')
         return pickle.load(open(spokes_pkl_filename, 'rb'))
 
+    print('Finding spokes...')
     spokes = []
     for axis in range(9):
-        scores = [(i, x) for i, x in enumerate(u[:, axis])]
-        spokes.append([s for s in find_spoke(scores, graph)])
-        print('  u{} spoke found. size: {}'.format(axis, len(spokes)))
+        scores = [(i, abs(x)) for i, x in enumerate(u[:, axis])]
+        spokes.append(find_spoke(scores, graph))
+        print('  u{} spoke found. size: {}'.format(axis, len(spokes[-1])))
 
     pickle.dump(spokes, open(spokes_pkl_filename, 'wb'))
     return spokes
@@ -116,16 +118,13 @@ def plot_spokes(u, spokes):
             ax.scatter(u_x, u_y)
             ax.set_xlabel('u{}'.format(x_axis))
             ax.set_ylabel('u{}'.format(y_axis))
-            print('({}, {})'.format(x_axis, y_axis))
 
-            '''
             for direction in [x_axis, y_axis]:
                 spoke = spokes[direction]
                 x = u[spoke, x_axis]
                 y = u[spoke, y_axis]
                 ax.scatter(x, y)
                 print('plotted a spoke of size ', len(x))
-            '''
 
 
         print('Saving figure', x_axis)
@@ -174,7 +173,6 @@ if __name__ == '__main__':
     graph = read_data(filename)
     filename = filename.split('/')[-1].split('.')[0]
 
-    #u, s, v = svd(graph, filename)
-    #spokes = find_spokes(graph, u, filename)
-    #plot_spokes(None, [])
-    example(graph)
+    u, s, v = svd(graph, filename)
+    spokes = find_spokes(nx.Graph(graph), u, filename)
+    plot_spokes(u, spokes)
