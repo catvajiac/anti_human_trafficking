@@ -158,7 +158,7 @@ def plot_spokes(data):
         os.mkdir(save_path)
 
     for x_axis in range(9):
-        plt.title('{} EE plots'.format(x_axis))
+        f.suptitle('u{} EE plots with refined spokes'.format(x_axis))
         for y_axis, ax in enumerate(axes):
             ax.scatter(*data[x_axis, y_axis]['points'])
             ax.set_xlabel('u{}'.format(x_axis))
