@@ -8,7 +8,12 @@ import os, sys
 import pickle
 
 from collections import Counter, defaultdict
+from itertools import combinations, product
 from sortedcontainers import SortedList
+from scipy.stats import normaltest, norm, linregress, multivariate_normal
+from scipy.optimize import curve_fit
+
+ZERO_CUTOFF = 1e-2
 
 
 # global path vars
@@ -61,8 +66,10 @@ def find_spoke(scores, graph, metric=modularity):
 
     while len(neighbors):
         i, x = neighbors.pop(-1)
-        spoke.add(i)
         visited.add(i)
+        if x <= ZERO_CUTOFF:
+            continue
+        spoke.add(i)
 
         spoke_graph = graph.subgraph(spoke)
         if metric(spoke_graph) > 1:
@@ -95,37 +102,70 @@ def find_spokes(graph, u, filename):
     return spokes
 
 
-def plot_spokes(u, spokes):
+def refine_pairwise_spokes(u, spokes):
+    data = {(x, y): defaultdict(list) for x, y in product(range(9), repeat=2)}
+
+    for x_axis in range(9):
+        for y_axis in range(9):
+            x, y = filter_zeros(u[:, x_axis], u[:, y_axis])
+            data[x_axis, y_axis]['points'] = (x, y)
+
+            for direction in [x_axis, y_axis]:
+                spoke = spokes[direction]
+                x = u[spoke, x_axis]
+                y = u[spoke, y_axis]
+                if not len(x) or calc_entropy(x, y) < 5:
+                    continue
+                data[x_axis, y_axis]['spoke'].append((x, y))
+
+    return data
+
+
+def filter_zeros(u_x, u_y):
+    ''' removes pairs of x and y that are close to zero '''
+    plot_x, plot_y = [], []
+    for x, y in zip(u_x, u_y):
+        if abs(x) <= ZERO_CUTOFF and abs(y) <= ZERO_CUTOFF:
+            continue
+        plot_x.append(x)
+        plot_y.append(y)
+
+    return plot_x, plot_y
+
+
+def calc_entropy(x, y):
+    # note: have to add noise to make cov matrix not singular
+    data = np.stack((x, y), axis=0)# + .001*np.random.rand(2, len(x))
+    cov = np.cov(data)
+    mean = [sum(x) / len(x), sum(y) / len(y)]
+    try:
+        entropy = abs(multivariate_normal(mean=mean, cov=cov).entropy())
+    except:
+        entropy = float('inf')
+    #print(m_norm.pdf([(a, b) for a, b in zip(x, y)]))
+    return entropy
+
+
+def plot_spokes(data):
     ''' plots EE plots of the first 9 eigenvectors '''
-    array = nx.to_numpy_matrix(graph)
-    u, s, v = np.linalg.svd(array)
 
-    f, ((ax1, ax2, ax3), (ax4, ax5, ax6), (ax7, ax8, ax9)) = plt.subplots(3, 3,  sharex='col', sharey='row', figsize=(8,8), dpi=80)
+    f, ((a1, a2, a3), (a4, a5, a6), (a7, a8, a9))= plt.subplots(3, 3,  sharex='col', sharey='row', figsize=(8,8), dpi=80)
 
-    u = np.array(u)
-    axes = [ax1, ax2, ax3, ax4, ax5, ax6, ax7, ax8, ax9]
+    axes = [a1, a2, a3, a4, a5, a6, a7, a8, a9]
 
     save_path = '{}/{}'.format(PLOTS_PATH, filename)
     if not os.path.exists(save_path):
         os.mkdir(save_path)
 
     for x_axis in range(9):
-        u_x = u[:, x_axis]
-        f.suptitle('{} comparisons with u{}'.format(filename, x_axis))
-
+        plt.title('{} EE plots'.format(x_axis))
         for y_axis, ax in enumerate(axes):
-            u_y = u[:, y_axis]
-            ax.scatter(u_x, u_y)
+            ax.scatter(*data[x_axis, y_axis]['points'])
             ax.set_xlabel('u{}'.format(x_axis))
             ax.set_ylabel('u{}'.format(y_axis))
 
-            for direction in [x_axis, y_axis]:
-                spoke = spokes[direction]
-                x = u[spoke, x_axis]
-                y = u[spoke, y_axis]
+            for x, y in data[x_axis, y_axis]['spoke']:
                 ax.scatter(x, y)
-                print('plotted a spoke of size ', len(x))
-
 
         print('Saving figure', x_axis)
         plt.savefig('{}/u{}.png'.format(save_path, x_axis))
@@ -137,27 +177,6 @@ def plot_spokes(u, spokes):
 def usage(exit_code):
     print('Usage: _ [filename]')
     exit(exit_code)
-
-
-def example(G):
-    A = nx.to_numpy_matrix(G)
-
-    u, s, v = np.linalg.svd(A)
-    u = np.array(u)
-
-    f, ((ax1, ax2, ax3), (ax4, ax5, ax6), (ax7, ax8, ax9)) = plt.subplots(3, 3,  sharex='col', sharey='row', figsize=(8,8), dpi=80)
-
-    ax1.scatter(u[:,0],u[:,0])
-    ax2.scatter(u[:,0],u[:,1])
-    ax3.scatter(u[:,0],u[:,2])
-    ax4.scatter(u[:,0],u[:,3])
-    ax5.scatter(u[:,0],u[:,4])
-    ax6.scatter(u[:,0],u[:,5])
-    ax7.scatter(u[:,0],u[:,6])
-    ax8.scatter(u[:,0],u[:,7])
-    ax9.scatter(u[:,0],u[:,8])
-
-    plt.show()
 
 
 if __name__ == '__main__':
@@ -175,4 +194,5 @@ if __name__ == '__main__':
 
     u, s, v = svd(graph, filename)
     spokes = find_spokes(nx.Graph(graph), u, filename)
-    plot_spokes(u, spokes)
+    data = refine_pairwise_spokes(u, spokes)
+    plot_spokes(data)
