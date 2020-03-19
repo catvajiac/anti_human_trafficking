@@ -183,9 +183,9 @@ def filter_singular_vectors(data):
     singular_vectors = set(range(9))
     for x in range(9):
         no_spokes = set([y for y in range(9) if not len(data[x, y]['spoke'])])
-        potential_spokes -= no_spokes
+        singular_vectors -= no_spokes
 
-    return return singular_vectors
+    return singular_vectors
 
 
 def usage(exit_code):
@@ -210,3 +210,6 @@ if __name__ == '__main__':
     spokes = find_spokes(nx.Graph(graph), u, filename)
     data = refine_pairwise_spokes(u, spokes)
     useful_u_indices = filter_singular_vectors(data)
+    print(useful_u_indices)
+    plot_spokes(data)
+
