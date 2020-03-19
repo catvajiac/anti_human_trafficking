@@ -7,10 +7,10 @@ import numpy as np
 import os, sys
 import pickle
 
-from collections import Counter, defaultdict
-from itertools import combinations, product
+from collections import defaultdict
+from itertools import product
 from sortedcontainers import SortedList
-from scipy.stats import normaltest, norm, linregress, multivariate_normal
+from scipy.stats import multivariate_normal
 from scipy.optimize import curve_fit
 
 ZERO_CUTOFF = 1e-2
@@ -84,7 +84,6 @@ def find_spoke(scores, graph, metric=modularity):
     return list(spoke)
 
 
-
 def find_spokes(graph, u, filename):
     ''' Find spokes - for now just looks at top 9 eigenvectors for ease of plotting later '''
     spokes_pkl_filename = '{}/{}_spokes.pkl'.format(PKL_PATH, filename)
@@ -146,7 +145,7 @@ def calc_entropy(x, y):
         entropy = abs(multivariate_normal(mean=mean, cov=cov).entropy())
     except:
         entropy = float('inf')
-    #print(m_norm.pdf([(a, b) for a, b in zip(x, y)]))
+
     return entropy
 
 
