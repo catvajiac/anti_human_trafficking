@@ -84,6 +84,7 @@ def find_spoke(scores, graph, metric=modularity):
     return list(spoke)
 
 
+
 def find_spokes(graph, u, filename):
     ''' Find spokes - for now just looks at top 9 eigenvectors for ease of plotting later '''
     spokes_pkl_filename = '{}/{}_spokes.pkl'.format(PKL_PATH, filename)
@@ -103,6 +104,7 @@ def find_spokes(graph, u, filename):
 
 
 def refine_pairwise_spokes(u, spokes):
+    ''' only keeps spokes that create useful EE plots '''
     data = {(x, y): defaultdict(list) for x, y in product(range(9), repeat=2)}
 
     for x_axis in range(9):
@@ -134,6 +136,8 @@ def filter_zeros(u_x, u_y):
 
 
 def calc_entropy(x, y):
+    ''' fits a 2D gaussian to point cloud and calculates the entropy of the data given the
+        gaussian model '''
     # note: have to add noise to make cov matrix not singular
     data = np.stack((x, y), axis=0)# + .001*np.random.rand(2, len(x))
     cov = np.cov(data)
@@ -174,6 +178,17 @@ def plot_spokes(data):
             ax.cla()
 
 
+def filter_singular_vectors(data):
+    ''' this returns a set of singular vectors that create spokes in EE plots with all other
+        singular vectors in the set '''
+    singular_vectors = set(range(9))
+    for x in range(9):
+        no_spokes = set([y for y in range(9) if not len(data[x, y]['spoke'])])
+        potential_spokes -= no_spokes
+
+    return return singular_vectors
+
+
 def usage(exit_code):
     print('Usage: _ [filename]')
     exit(exit_code)
@@ -195,4 +210,4 @@ if __name__ == '__main__':
     u, s, v = svd(graph, filename)
     spokes = find_spokes(nx.Graph(graph), u, filename)
     data = refine_pairwise_spokes(u, spokes)
-    plot_spokes(data)
+    useful_u_indices = filter_singular_vectors(data)
