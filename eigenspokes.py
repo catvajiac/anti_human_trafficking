@@ -182,7 +182,9 @@ def filter_singular_vectors(data):
         singular vectors in the set '''
     singular_vectors = set(range(9))
     for x in range(9):
-        no_spokes = set([y for y in range(9) if not len(data[x, y]['spoke'])])
+        if x not in singular_vectors:
+            continue
+        no_spokes = set([y for y in singular_vectors if not len(data[x, y]['spoke'])])
         singular_vectors -= no_spokes
 
     return singular_vectors
