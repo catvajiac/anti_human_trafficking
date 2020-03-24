@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import math
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
@@ -11,16 +10,21 @@ from collections import defaultdict
 from itertools import product
 from sortedcontainers import SortedList
 from scipy.stats import multivariate_normal
-from scipy.optimize import curve_fit
+
+
+# global vars
 
 ZERO_CUTOFF = 1e-2
-
-
-# global path vars
-
 PLOTS_PATH = './plots/eigenspokes/'
 PKL_PATH = './pkl_files'
 PATHS = [PLOTS_PATH, PKL_PATH]
+
+
+# Utility functions
+
+def usage(exit_code):
+    print('Usage: _ [filename]')
+    exit(exit_code)
 
 
 def read_data(filename):
@@ -32,10 +36,44 @@ def read_data(filename):
     return graph
 
 
-def svd(graph, filename):
+def modularity(graph):
+    ''' returns number of communities found '''
+    return len(nx.algorithms.community.greedy_modularity_communities(graph))
+
+
+def filter_zeros(u_x, u_y):
+    ''' removes pairs of x and y that are close to zero '''
+    plot_x, plot_y = [], []
+    for x, y in zip(u_x, u_y):
+        if abs(x) <= ZERO_CUTOFF and abs(y) <= ZERO_CUTOFF:
+            continue
+        plot_x.append(x)
+        plot_y.append(y)
+
+    return plot_x, plot_y
+
+
+def calc_entropy(x, y):
+    ''' fits a 2D gaussian to point cloud and calculates the entropy of the data given the
+        gaussian model '''
+    # note: have to add noise to make cov matrix not singular
+    data = np.stack((x, y), axis=0)# + .001*np.random.rand(2, len(x))
+    cov = np.cov(data)
+    mean = [sum(x) / len(x), sum(y) / len(y)]
+    try:
+        entropy = abs(multivariate_normal(mean=mean, cov=cov).entropy())
+    except:
+        entropy = float('inf')
+
+    return entropy
+
+
+# Core functions
+
+def svd(graph, filename, use_pkl=True):
     ''' returns tuple: (u, s, v) '''
     svd_pkl_filename = '{}/{}_svd.pkl'.format(PKL_PATH, filename)
-    if os.path.exists(svd_pkl_filename):
+    if use_pkl and os.path.exists(svd_pkl_filename):
         print('Using SVD pkl file...')
         return pickle.load(open(svd_pkl_filename, 'rb'))
 
@@ -43,13 +81,10 @@ def svd(graph, filename):
     array = nx.to_numpy_matrix(graph)
     u, s, v = np.linalg.svd(array)
     u = np.array(u)
-    pickle.dump((u, s, v), open(svd_pkl_filename, 'wb'))
+    if use_pkl:
+        pickle.dump((u, s, v), open(svd_pkl_filename, 'wb'))
+
     return u, s, v
-
-
-def modularity(graph):
-    ''' returns number of communities found '''
-    return len(nx.algorithms.community.greedy_modularity_communities(graph))
 
 
 def find_spoke(scores, graph, metric=modularity):
@@ -84,21 +119,24 @@ def find_spoke(scores, graph, metric=modularity):
     return list(spoke)
 
 
-def find_spokes(graph, u, filename):
+def find_spokes(graph, u, filename, use_pkl=True):
     ''' Find spokes - for now just looks at top 9 eigenvectors for ease of plotting later '''
     spokes_pkl_filename = '{}/{}_spokes.pkl'.format(PKL_PATH, filename)
-    if os.path.exists(spokes_pkl_filename):
+    if use_pkl and os.path.exists(spokes_pkl_filename):
         print('Using spokes pkl file...')
         return pickle.load(open(spokes_pkl_filename, 'rb'))
 
     print('Finding spokes...')
     spokes = []
     for axis in range(9):
+        if u.shape[0] <= axis:
+            break
         scores = [(i, abs(x)) for i, x in enumerate(u[:, axis])]
         spokes.append(find_spoke(scores, graph))
         print('  u{} spoke found. size: {}'.format(axis, len(spokes[-1])))
 
-    pickle.dump(spokes, open(spokes_pkl_filename, 'wb'))
+    if use_pkl:
+        pickle.dump(spokes, open(spokes_pkl_filename, 'wb'))
     return spokes
 
 
@@ -108,6 +146,9 @@ def refine_pairwise_spokes(u, spokes):
 
     for x_axis in range(9):
         for y_axis in range(9):
+            if u.shape[0] <= x_axis or u.shape[0] <= y_axis:
+                data.pop((x_axis, y_axis))
+                continue
             x, y = filter_zeros(u[:, x_axis], u[:, y_axis])
             data[x_axis, y_axis]['points'] = (x, y)
 
@@ -122,31 +163,18 @@ def refine_pairwise_spokes(u, spokes):
     return data
 
 
-def filter_zeros(u_x, u_y):
-    ''' removes pairs of x and y that are close to zero '''
-    plot_x, plot_y = [], []
-    for x, y in zip(u_x, u_y):
-        if abs(x) <= ZERO_CUTOFF and abs(y) <= ZERO_CUTOFF:
+def filter_singular_vectors(data):
+    ''' this returns a set of singular vectors that create spokes in EE plots with all other
+        singular vectors in the set '''
+    max_sv = max([max(x, y) for x, y in data])
+    singular_vectors = set(range(max_sv))
+    for x in range(9):
+        if x not in singular_vectors:
             continue
-        plot_x.append(x)
-        plot_y.append(y)
+        no_spokes = set([y for y in singular_vectors if not len(data[x, y]['spoke'])])
+        singular_vectors -= no_spokes
 
-    return plot_x, plot_y
-
-
-def calc_entropy(x, y):
-    ''' fits a 2D gaussian to point cloud and calculates the entropy of the data given the
-        gaussian model '''
-    # note: have to add noise to make cov matrix not singular
-    data = np.stack((x, y), axis=0)# + .001*np.random.rand(2, len(x))
-    cov = np.cov(data)
-    mean = [sum(x) / len(x), sum(y) / len(y)]
-    try:
-        entropy = abs(multivariate_normal(mean=mean, cov=cov).entropy())
-    except:
-        entropy = float('inf')
-
-    return entropy
+    return singular_vectors
 
 
 def plot_spokes(data):
@@ -163,7 +191,9 @@ def plot_spokes(data):
     for x_axis in range(9):
         f.suptitle('u{} EE plots with refined spokes'.format(x_axis))
         for y_axis, ax in enumerate(axes):
-            ax.scatter(*data[x_axis, y_axis]['points'])
+            x = data[x_axis, y_axis]['points'][0]
+            y = data[x_axis, y_axis]['points'][1]
+            ax.scatter(x, y)
             ax.set_xlabel('u{}'.format(x_axis))
             ax.set_ylabel('u{}'.format(y_axis))
 
@@ -175,24 +205,6 @@ def plot_spokes(data):
 
         for ax in axes:
             ax.cla()
-
-
-def filter_singular_vectors(data):
-    ''' this returns a set of singular vectors that create spokes in EE plots with all other
-        singular vectors in the set '''
-    singular_vectors = set(range(9))
-    for x in range(9):
-        if x not in singular_vectors:
-            continue
-        no_spokes = set([y for y in singular_vectors if not len(data[x, y]['spoke'])])
-        singular_vectors -= no_spokes
-
-    return singular_vectors
-
-
-def usage(exit_code):
-    print('Usage: _ [filename]')
-    exit(exit_code)
 
 
 if __name__ == '__main__':
