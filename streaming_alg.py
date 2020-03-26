@@ -11,6 +11,9 @@ import matplotlib.pyplot as plt
 from collections import Counter, defaultdict
 from datetime import datetime
 
+DESCRIPTION = 'u_Description'
+TIMESTAMP = 'PostingDate'
+
 class hash_family():
     def __init__(self, num_hash_functions=32, buckets_in_hash=1000):
         self.num_hash_functions = num_hash_functions
@@ -21,6 +24,7 @@ class hash_family():
         self.hash_tables = [defaultdict(list) for _ in range(num_hash_functions)]
 
     def add_to_hash_tables_and_graph(self, phrase, ad_id, data):
+        data.ad_graph.add_node(ad_id)
         related_ads = Counter()
         # hash phrase for all k hash functions
         for h, table in zip(self.hash_functions, self.hash_tables):
@@ -52,7 +56,7 @@ class data():
         print('Finding idf...')
         idf = Counter()
         for _, row in self.data.iterrows():
-            for word in set(row['description'].split()):
+            for word in set(row[DESCRIPTION].split()):
                 idf[word] += 1
 
         N = len(self.data.index)
@@ -71,6 +75,7 @@ class data():
         self.ad_graph = nx.DiGraph()
 
         N = len(self.data.index)
+        # assume in order of timestamp (streaming case)
         for index, row in self.data.iterrows():
             # write graph every 1000 ads
             if index % 1000 == 0 and index != 0:
@@ -78,13 +83,18 @@ class data():
                 with open('ad_graph2.pkl', 'wb') as f:
                     pickle.dump(self.ad_graph, f)
 
-            ad_text = row['description'].split()
+            ad_text = row[DESCRIPTION].split()
 
             tfidf_scores = [(tfidf(word, ad_text), word) for word in ad_text]
             tfidf_scores.sort(reverse=True)
 
             for score, word in tfidf_scores[:self.num_phrases]:
                 hashes.add_to_hash_tables_and_graph(word, index, self)
+
+        with open('ad_graph2.pkl', 'wb') as f:
+            pickle.dump(self.ad_graph, f)
+
+
 
 
 
