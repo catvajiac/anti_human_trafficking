@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Author:   Catalina Vajiac
+# Purpose:  Use LSH idea to cluster ad data
+# Usage:    ./streaming_alg.py [filename]
 
 import math
 import networkx as nx
@@ -13,9 +16,10 @@ from datetime import datetime
 
 DESCRIPTION = 'u_Description'
 TIMESTAMP = 'PostingDate'
+AD_ID = 'ad_id'
 
 class hash_family():
-    def __init__(self, num_hash_functions=32, buckets_in_hash=1000):
+    def __init__(self, num_hash_functions=64, buckets_in_hash=1000):
         self.num_hash_functions = num_hash_functions
         self.buckets_in_hash = buckets_in_hash
 
@@ -36,6 +40,7 @@ class hash_family():
 
         # draw edges
         edges = [(s, ad_id, count) for s, count in related_ads.items() if count >= self.num_hash_functions / 2]
+        edges = edges[-1000:]
         data.ad_graph.add_weighted_edges_from(edges)
 
 
@@ -47,10 +52,12 @@ class hash_family():
 
 
 class data():
-    def __init__(self, filename, num_phrases=2):
+    def __init__(self, filename, num_phrases=10):
         self.filename = filename
         self.num_phrases = num_phrases
         self.data = pandas.read_csv(self.filename)
+        self.data.sort_values(by=['PostingDate']) # since ads not in order as they should be
+
 
     def find_idf(self):
         print('Finding idf...')
@@ -61,12 +68,14 @@ class data():
 
         N = len(self.data.index)
         for word, doc_freq in idf.items():
-            idf[word] = math.log10(idf[word]/(N+1))
+            idf[word] = math.log10(N/idf[word])
 
         self.idf = idf
 
+
     def process_data(self):
         print('Processing ads...')
+
         def tfidf(word, document):
             return document.count(word) / len(document) * self.idf[word]
 
@@ -76,26 +85,32 @@ class data():
 
         N = len(self.data.index)
         # assume in order of timestamp (streaming case)
+        words_used = Counter()
         for index, row in self.data.iterrows():
             # write graph every 1000 ads
             if index % 1000 == 0 and index != 0:
                 print(index, '/', N)
-                with open('ad_graph2.pkl', 'wb') as f:
+                with open('{}_ad_graph.pkl'.format(filename), 'wb') as f:
                     pickle.dump(self.ad_graph, f)
 
             ad_text = row[DESCRIPTION].split()
+            ad_id = row[AD_ID]
 
             tfidf_scores = [(tfidf(word, ad_text), word) for word in ad_text]
             tfidf_scores.sort(reverse=True)
 
             for score, word in tfidf_scores[:self.num_phrases]:
-                hashes.add_to_hash_tables_and_graph(word, index, self)
+                words_used[word] += 1
+                hashes.add_to_hash_tables_and_graph(word, ad_id, self)
 
-        with open('ad_graph2.pkl', 'wb') as f:
+        with open('{}_ad_graph.pkl'.format(filename), 'wb') as f:
             pickle.dump(self.ad_graph, f)
 
-
-
+        words = [(word, count) for word, count in words_used.items()]
+        for i, (word, count) in enumerate(sorted(words, reverse=True, key=lambda x: x[1])):
+            print(word, count)
+            if i >= 100:
+                break
 
 
 def usage(exit_code):
