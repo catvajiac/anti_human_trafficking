@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Author: Catalina
+# Purpose: generate graph data for experiments for AHT
+# Usage: ./graph_generator.py [graph_type] [necessary params]
 
 import networkx as nx
 import os, sys
