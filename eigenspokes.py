@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Author:   Catalina Vajiac
+# Purpose:  decides which eigenvectors store ''useful'' information
+# Usage:    ./eigenspokes.py [filename]
 
 import matplotlib.pyplot as plt
 import networkx as nx
