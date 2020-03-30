@@ -27,14 +27,40 @@ def gen_bipartite(params):
     return nx.complete_multipartite_graph(n, m), 'bipartite_n-{}_m-{}'.format(n, m)
 
 
+def gen_blocks(params):
+    is_noise = params['noise'] == 'True'
+    is_camouflage = params['camouflage'] == 'True'
+
+    graph = nx.DiGraph()
+    with open('./data/dense_blocks_3.txt', 'r') as f:
+        edges = [tuple(map(int, line.split())) for line in f]
+        graph.add_edges_from(edges)
+
+    if is_noise:
+        params['nodes'] = 300
+        params['edges'] = 200
+        noise, _ = gen_random_graph(params)
+        graph = nx.disjoint_union(graph, noise)
+
+    if is_camouflage:
+        params['nodes'] = graph.number_of_nodes()
+        params['edges'] = 300
+        camouflage, _ = gen_random_graph(params)
+        graph.add_edges_from(camouflage.edges)
+
+    graph = nx.convert_node_labels_to_integers(graph)
+    return graph, 'dense_noise-{}_camouflage-{}'.format(params['noise'], params['camouflage'])
+
+
 def usage(code):
-    print('Usage: {} [er|complete] param=num')
+    print('Usage: {} [er|complete|bipartite|dense] param=num')
     exit(code)
 
 GENERATOR = {
     'er': gen_random_graph,
     'complete': gen_complete_graph,
     'bipartite': gen_bipartite,
+    'dense': gen_blocks
 }
 
 if __name__ == '__main__':
