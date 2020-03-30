@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 
-import eigenspokes
 import os, sys
 import unittest
+import eigenspokes
 
 from itertools import product
 
 
 class test_eigenspokes(unittest.TestCase):
-    def test_read_data(self, filename='test_eigenspokes.txt'):
+    def test_read_data(self, filename='tests/test_eigenspokes.txt'):
         graph = eigenspokes.read_data(filename)
         self.assertEqual(graph.number_of_nodes(), 8)
         self.assertEqual(graph.number_of_edges(), 24)
 
-    def test_modularity(self, filename='test_eigenspokes.txt'):
+    def test_modularity(self, filename='tests/test_eigenspokes.txt'):
         graph = eigenspokes.read_data(filename)
         num_communities = eigenspokes.modularity(graph)
         self.assertEqual(num_communities, 2)
@@ -34,14 +34,14 @@ class test_eigenspokes(unittest.TestCase):
         entropy = eigenspokes.calc_entropy(x, y)
         self.assertAlmostEqual(entropy, 3.60609, places=4)
 
-    def test_svd(self, filename='test_eigenspokes.txt'):
+    def test_svd(self, filename='tests/test_eigenspokes.txt'):
         graph = eigenspokes.read_data(filename)
         u, s, v = eigenspokes.svd(graph, filename, use_pkl=False)
         self.assertEqual(u.shape, v.shape, s.shape)
         for col in range(u.shape[1]):
             self.assertAlmostEqual(sum(u[:, col]**2), 1)
 
-    def test_find_spokes(self, filename='test_eigenspokes.txt'):
+    def test_find_spokes(self, filename='tests/test_eigenspokes.txt'):
         # this will subsequently also test find_spoke subroutine
         graph = eigenspokes.read_data(filename)
         u, s, v = eigenspokes.svd(graph, filename, use_pkl=False)
@@ -49,7 +49,7 @@ class test_eigenspokes(unittest.TestCase):
         for spoke in spokes:
             self.assertEqual(len(spoke), 1)
 
-    def test_refine_pairwise_spokes(self, filename='test_eigenspokes.txt'):
+    def test_refine_pairwise_spokes(self, filename='tests/test_eigenspokes.txt'):
         graph = eigenspokes.read_data(filename)
         u, s, v = eigenspokes.svd(graph, filename, use_pkl=False)
         spokes = eigenspokes.find_spokes(graph, u, 'test', use_pkl=False)
@@ -62,17 +62,10 @@ class test_eigenspokes(unittest.TestCase):
             for x, y in data[x_axis, y_axis]['spoke']:
                 self.assertTrue(eigenspokes.calc_entropy(x, y) >= 5)
 
-
-    def test_filter_singular_vectors(self, filename='test_eigenspokes.txt'):
+    def test_filter_singular_vectors(self, filename='tests/test_eigenspokes.txt'):
         graph = eigenspokes.read_data(filename)
         u, s, v = eigenspokes.svd(graph, filename, use_pkl=False)
         spokes = eigenspokes.find_spokes(graph, u, 'test', use_pkl=False)
         data = eigenspokes.refine_pairwise_spokes(u, spokes)
         filtered_spokes = eigenspokes.filter_singular_vectors(data)
         self.assertEqual(filtered_spokes, set(range(7)))
-
-
-if __name__ == '__main__':
-    with open(os.devnull, 'w') as f:
-        sys.stdout = f
-        unittest.main(buffer=False)
