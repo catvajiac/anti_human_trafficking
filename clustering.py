@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Author: Catalina Vajiac
+# Purpose: create microclusters and a representation of their common substrings and "don't care" parts
+# Usage: ./clusterng.py [filename]
 
 import sys
 
@@ -78,10 +81,10 @@ def build_regex(matrix, ads, bigrams_to_indices, indices_to_bigrams):
         print(row, ad)
         similarity = calculate_similarity(regex_ngrams, row)
         # TODO: if similiarity bad, consider a split
+        # how to split?
 
-        # TODO: find all common subtokens that appear in order
-        derp = find_common_subtokens(regex, ad)
-        print('subtok', derp)
+        # TODO: use these to combine the phrases
+        combine_phrases(regex, ad)
 
     #print(matrix)
     pass
@@ -131,10 +134,15 @@ def construct_regex_ngrams(regex, bigrams_to_indices):
 
 
 def calculate_similarity(regex, line):
+    # TODO: how to calculate similarity metric, to determine if these are too dissimilar to merge
+    # (i.e. a split of the cluster is required)
     pass
 
-def combine_regexes(r1, r2):
-    pass
+def combine_phrases(r1, r2):
+    in_common = find_common_subtokens(r1, r2)
+    print('common subtokens:', in_common)
+
+    # now: merge the two phrases, adding "don't care" portions where the phrases differ
 
 
 if __name__ == '__main__':
