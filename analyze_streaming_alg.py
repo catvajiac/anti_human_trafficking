@@ -3,6 +3,7 @@
 # Purpose: catchall script to analyze output from streaming_alg.py
 # Usage: ./analyze_streaming_alg.py [graph_pkl] [original_csv]
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import networkx as nx
 import os, sys
@@ -58,9 +59,10 @@ def plot_degree_distributions(graph):
 def analyze_connected_components(graph, data):
     print("Components:", nx.number_weakly_connected_components(graph))
 
-    for comp in nx.weakly_connected_components(graph):
+    for i, comp in enumerate(nx.weakly_connected_components(graph)):
         # look at data for all small clusters
-        if len(comp) > 1 and len(comp) < 100:
+        if len(comp) > 1 and len(comp) < 1000:
+            print('NEW CLUSTER', len(comp))
             cluster = data.loc[data['ad_id'].isin(comp)]
             dups_shape = cluster.pivot_table(index=['u_Description'], aggfunc='size')
             if len(dups_shape) == 1:
@@ -69,18 +71,8 @@ def analyze_connected_components(graph, data):
                 print(row['u_Description'])
                 print()
 
-        # analyze the one big cluster
-        if len(comp) > 1000:
-            subgraph = graph.subgraph(comp).to_undirected()
-            sub_communities = nx.algorithms.community.greedy_modularity_communities(subgraph)
-            for comm in sub_communities:
-                print('LEN:', len(comm))
-                for ad in comm:
-                    print(ad)
-
-                print('\n\n')
-
             print('\n\n')
+
 
 def plot_posts_per_day(data):
     data['PostingDate'] = pandas.to_datetime(data['PostingDate'])
@@ -88,8 +80,6 @@ def plot_posts_per_day(data):
     plt.title('Number of posts/day')
     groups.plot.bar(rot=80)
     plt.show()
-
-
 
 
 if __name__ == '__main__':

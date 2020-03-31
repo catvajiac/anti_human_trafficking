@@ -9,23 +9,27 @@ import os, sys
 import pandas
 import pickle
 import random
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 from collections import Counter, defaultdict
 from datetime import datetime
+from nltk.tokenize import word_tokenize
 
 DESCRIPTION = 'u_Description'
 TIMESTAMP = 'PostingDate'
 AD_ID = 'ad_id'
 
+
 class hash_family():
-    def __init__(self, num_hash_functions=64, buckets_in_hash=1000):
+    def __init__(self, num_hash_functions=256, buckets_in_hash=10000):
         self.num_hash_functions = num_hash_functions
         self.buckets_in_hash = buckets_in_hash
 
         random_generator = lambda: random.randrange(buckets_in_hash)
         self.hash_functions = [defaultdict(random_generator) for _ in range(num_hash_functions)]
         self.hash_tables = [defaultdict(list) for _ in range(num_hash_functions)]
+
 
     def add_to_hash_tables_and_graph(self, phrase, ad_id, data):
         data.ad_graph.add_node(ad_id)
@@ -52,25 +56,51 @@ class hash_family():
 
 
 class data():
-    def __init__(self, filename, num_phrases=10):
+    def __init__(self, filename, num_phrases=5):
         self.filename = filename
         self.num_phrases = num_phrases
         self.data = pandas.read_csv(self.filename)
         self.data.sort_values(by=['PostingDate']) # since ads not in order as they should be
 
 
+    def preprocess_ad(self, ad):
+        return word_tokenize(''.join([c for c in ad if c.isalnum() or c==' ']))
+
+
     def find_idf(self):
         print('Finding idf...')
         idf = Counter()
         for _, row in self.data.iterrows():
-            for word in set(row[DESCRIPTION].split()):
-                idf[word] += 1
+            ad_text = self.preprocess_ad(row[DESCRIPTION])
+            #for ngram in range(5):
+            for ngram in [5]:
+                tokens = list(zip(*[ad_text[i:] for i in range(ngram)]))
+
+                for phrase in set(tokens):
+                    idf[phrase] += 1
 
         N = len(self.data.index)
-        for word, doc_freq in idf.items():
-            idf[word] = math.log10(N/idf[word])
+        for phrase, doc_freq in idf.items():
+            idf[phrase] = math.log10(N/idf[phrase])
 
         self.idf = idf
+        print('finished idf')
+
+
+    def calc_tfidf(self, ad_text):
+        def tfidf(word, document):
+            tokens = list(zip(*[document[i:] for i in range(len(word))]))
+            return tokens.count(word) / len(tokens) * self.idf[word], word
+
+        scores = []
+        #for ngram in range(5):
+        for ngram in [5]:
+            tokens = list(zip(*[ad_text[i:] for i in range(ngram)]))
+            for phrase in tokens:
+                scores.append(tfidf(tuple(phrase), ad_text))
+
+        scores.sort(reverse=True)
+        return scores[:self.num_phrases]
 
 
     def process_data(self):
@@ -80,8 +110,9 @@ class data():
             return document.count(word) / len(document) * self.idf[word]
 
         self.find_idf()
-        hashes = hash_family()
+        self.hashes = hash_family()
         self.ad_graph = nx.DiGraph()
+        self.cluster = []
 
         N = len(self.data.index)
         # assume in order of timestamp (streaming case)
@@ -93,25 +124,26 @@ class data():
                 with open('{}_ad_graph.pkl'.format(filename), 'wb') as f:
                     pickle.dump(self.ad_graph, f)
 
-            ad_text = row[DESCRIPTION].split()
+            ad_text = self.preprocess_ad(row[DESCRIPTION])
             ad_id = row[AD_ID]
 
-            tfidf_scores = [(tfidf(word, ad_text), word) for word in ad_text]
-            tfidf_scores.sort(reverse=True)
+
+            tfidf_scores = self.calc_tfidf(ad_text)
+
+            if ad_id in CLUSTER:
+                self.cluster += tfidf_scores
 
             for score, word in tfidf_scores[:self.num_phrases]:
                 words_used[word] += 1
-                hashes.add_to_hash_tables_and_graph(word, ad_id, self)
+                self.hashes.add_to_hash_tables_and_graph(word, ad_id, self)
+                #self.hashes.add_to_hash_tables_only(word, ad_id, self)
 
         with open('{}_ad_graph.pkl'.format(filename), 'wb') as f:
             pickle.dump(self.ad_graph, f)
 
-        words = [(word, count) for word, count in words_used.items()]
-        for i, (word, count) in enumerate(sorted(words, reverse=True, key=lambda x: x[1])):
-            print(word, count)
-            if i >= 100:
-                break
 
+        for thing in self.cluster:
+            print(thing)
 
 def usage(exit_code):
     print('Usage: _ [filename]')
