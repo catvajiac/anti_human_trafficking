@@ -130,9 +130,6 @@ class data():
 
             tfidf_scores = self.calc_tfidf(ad_text)
 
-            if ad_id in CLUSTER:
-                self.cluster += tfidf_scores
-
             for score, word in tfidf_scores[:self.num_phrases]:
                 words_used[word] += 1
                 self.hashes.add_to_hash_tables_and_graph(word, ad_id, self)
