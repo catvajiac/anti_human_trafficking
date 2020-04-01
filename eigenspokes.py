@@ -13,6 +13,7 @@ from collections import defaultdict
 from itertools import product
 from sortedcontainers import SortedList
 from scipy.stats import multivariate_normal
+import scipy as sp
 
 
 # global vars
@@ -32,11 +33,13 @@ def usage(exit_code):
 
 def read_data(filename):
     ''' Assume data format is edge list split by newlines, autoconverts labels to integers '''
+    if filename.endswith('.pkl'):
+        return pickle.load(open(filename, 'rb'))
     with open(filename, 'r') as f:
-        edges = [tuple(line.strip().split()) for line in f]
-    graph = nx.DiGraph(edges)
-    graph = nx.convert_node_labels_to_integers(graph)
-    return graph
+        edges = [tuple(map(int, line.strip().split())) for line in f]
+    graph = nx.DiGraph()
+    graph.add_edges_from(edges)
+    return nx.convert_node_labels_to_integers(graph)
 
 
 def modularity(graph):
@@ -81,8 +84,9 @@ def svd(graph, filename, use_pkl=True):
         return pickle.load(open(svd_pkl_filename, 'rb'))
 
     print('Running SVD...')
-    array = nx.to_numpy_matrix(graph)
-    u, s, v = np.linalg.svd(array)
+    #array = nx.to_numpy_matrix(graph)
+    array = nx.to_scipy_sparse_matrix(graph, dtype='float64')
+    u, s, v = sp.sparse.linalg.svds(array, k=9, which='LM')
     u = np.array(u)
     if use_pkl:
         pickle.dump((u, s, v), open(svd_pkl_filename, 'wb'))
@@ -169,13 +173,14 @@ def refine_pairwise_spokes(u, spokes):
 def filter_singular_vectors(data):
     ''' this returns a set of singular vectors that create spokes in EE plots with all other
         singular vectors in the set '''
-    max_sv = max([max(x, y) for x, y in data])
-    singular_vectors = set(range(max_sv))
+    max_sv = max([max(x, y) for x, y in data]) + 1
+    singular_vectors = set()
     for x in range(9):
-        if x not in singular_vectors:
+        if sum(([any(data[x, y]['spoke']) for y in range(max_sv)])) == 9:
+            singular_vectors |= set([x])
             continue
-        no_spokes = set([y for y in singular_vectors if not len(data[x, y]['spoke'])])
-        singular_vectors -= no_spokes
+        spokes = set([y for y in range(max_sv) if y != x and len(data[x, y]['spoke'])])
+        singular_vectors |= spokes
 
     return singular_vectors
 
@@ -227,6 +232,10 @@ if __name__ == '__main__':
     spokes = find_spokes(nx.Graph(graph), u, filename)
     data = refine_pairwise_spokes(u, spokes)
     useful_u_indices = filter_singular_vectors(data)
+    print(filename)
     print(useful_u_indices)
+    plt.imshow(u[:,0:9], interpolation='nearest', aspect='auto')
+    plt.tight_layout()
+    plt.show()
     plot_spokes(data)
 
