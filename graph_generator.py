@@ -79,6 +79,7 @@ def gen_blocks(params):
     graph = nx.convert_node_labels_to_integers(graph)
     matrix = nx.to_numpy_matrix(graph)
     plt.imshow(matrix, cmap='hot', interpolation='nearest')
+    plt.title('Heatmap of input data matrix')
     filename = 'dense_noise-{}_camouflage-{}'.format(is_noise, is_camouflage)
     plt.savefig('./plots/eigenspokes/' + filename + '/heatmap.png')
     return graph, filename
