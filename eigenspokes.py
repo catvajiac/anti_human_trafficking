@@ -42,9 +42,13 @@ def read_data(filename):
     return nx.convert_node_labels_to_integers(graph)
 
 
-def modularity(graph):
+def modularity(subgraph, graph):
     ''' returns number of communities found '''
-    return len(nx.algorithms.community.greedy_modularity_communities(graph))
+    return len(nx.algorithms.community.greedy_modularity_communities(graph)) > 1
+
+def conductance(subgraph, graph):
+    #print(nx.algorithms.cuts.conductance(graph, subgraph.nodes))
+    return nx.algorithms.cuts.conductance(graph, subgraph.nodes) < 0.93
 
 
 def filter_zeros(u_x, u_y):
@@ -94,7 +98,7 @@ def svd(graph, filename, use_pkl=True):
     return u, s, v
 
 
-def find_spoke(scores, graph, metric=modularity):
+def find_spoke(scores, graph, metric=conductance):
     ''' first: find the point with highest projection, that is current spoke/subgraph
         then: always process a neighboring node to current subgraph which has the highest proj
         stop: when modularity metric says there are multiple communities '''
@@ -114,9 +118,9 @@ def find_spoke(scores, graph, metric=modularity):
         spoke.add(i)
 
         spoke_graph = graph.subgraph(spoke)
-        if metric(spoke_graph) > 1:
+        if metric(spoke_graph, graph):
             spoke.remove(i)
-            continue
+            break
 
         for neighbor in graph.neighbors(i):
             if neighbor in visited:
@@ -215,6 +219,15 @@ def plot_spokes(data):
             ax.cla()
 
 
+def plot_u(data, u, filename):
+    useful_u_indices = filter_singular_vectors(data)
+    plt.imshow(u[:,0:9], interpolation='nearest', aspect='auto')
+    plt.tight_layout()
+    plt.title('heatmap of u. found: ' + ' '.join(map(str, useful_u_indices)))
+    save_path = '{}/{}/u_visual.png'.format(PLOTS_PATH, filename)
+    plt.savefig(save_path)
+
+
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         usage(1)
@@ -232,10 +245,6 @@ if __name__ == '__main__':
     spokes = find_spokes(nx.Graph(graph), u, filename)
     data = refine_pairwise_spokes(u, spokes)
     useful_u_indices = filter_singular_vectors(data)
-    print(filename)
-    print(useful_u_indices)
-    plt.imshow(u[:,0:9], interpolation='nearest', aspect='auto')
-    plt.tight_layout()
-    plt.show()
+    plot_u(data, u, filename)
     plot_spokes(data)
 
