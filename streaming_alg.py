@@ -22,7 +22,7 @@ AD_ID = 'ad_id'
 
 
 class hash_family():
-    def __init__(self, num_hash_functions=256, buckets_in_hash=10000):
+    def __init__(self, num_hash_functions=256, buckets_in_hash=5000):
         self.num_hash_functions = num_hash_functions
         self.buckets_in_hash = buckets_in_hash
 
@@ -61,6 +61,7 @@ class data():
         self.num_phrases = num_phrases
         self.data = pandas.read_csv(self.filename)
         self.data.sort_values(by=['PostingDate']) # since ads not in order as they should be
+        self.ngrams = [3, 4, 5]
 
 
     def preprocess_ad(self, ad):
@@ -72,8 +73,7 @@ class data():
         idf = Counter()
         for _, row in self.data.iterrows():
             ad_text = self.preprocess_ad(row[DESCRIPTION])
-            #for ngram in range(5):
-            for ngram in [5]:
+            for ngram in self.ngrams:
                 tokens = list(zip(*[ad_text[i:] for i in range(ngram)]))
 
                 for phrase in set(tokens):
@@ -93,8 +93,7 @@ class data():
             return tokens.count(word) / len(tokens) * self.idf[word], word
 
         scores = []
-        #for ngram in range(5):
-        for ngram in [5]:
+        for ngram in self.ngrams:
             tokens = list(zip(*[ad_text[i:] for i in range(ngram)]))
             for phrase in tokens:
                 scores.append(tfidf(tuple(phrase), ad_text))
