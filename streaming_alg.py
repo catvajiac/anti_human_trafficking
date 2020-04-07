@@ -9,12 +9,11 @@ import os, sys
 import pandas
 import pickle
 import random
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 
 from collections import Counter, defaultdict
 from datetime import datetime
 from nltk.tokenize import word_tokenize
+
 
 DESCRIPTION = 'u_Description'
 TIMESTAMP = 'PostingDate'
@@ -24,6 +23,7 @@ AD_ID = 'ad_id'
 class hash_family():
     def __init__(self, num_hash_functions=256, buckets_in_hash=5000):
         self.num_hash_functions = num_hash_functions
+        self.hash_cutoff = num_hash_functions / 2
         self.buckets_in_hash = buckets_in_hash
 
         random_generator = lambda: random.randrange(buckets_in_hash)
@@ -31,21 +31,12 @@ class hash_family():
         self.hash_tables = [defaultdict(list) for _ in range(num_hash_functions)]
 
 
-    def add_to_hash_tables_and_graph(self, phrase, ad_id, data):
-        data.ad_graph.add_node(ad_id)
-        related_ads = Counter()
-        # hash phrase for all k hash functions
+    def add_to_hash_tables(self, to_hash, to_add):
         for h, table in zip(self.hash_functions, self.hash_tables):
-            for ad in table[h[phrase]]:
-                related_ads[ad] += 1
-            if len(table[h[phrase]]) >= 1000:
-                table[h[phrase]].pop(0)
-            table[h[phrase]].append(ad_id)
-
-        # draw edges
-        edges = [(s, ad_id, count) for s, count in related_ads.items() if count >= self.num_hash_functions / 2]
-        edges = edges[-1000:]
-        data.ad_graph.add_weighted_edges_from(edges)
+            if to_add not in table[h[to_hash]]:
+                table[h[to_hash]].append(to_add)
+            if len(table[h[to_hash]]) >= 1000:
+                table[h[to_hash]].pop(0)
 
 
     def pretty_print(self):
@@ -56,12 +47,16 @@ class hash_family():
 
 
 class data():
-    def __init__(self, filename, num_phrases=5):
+    def __init__(self, filename, num_phrases=5, ngrams = [3, 4, 5]):
         self.filename = filename
         self.num_phrases = num_phrases
+        self.ngrams = ngrams
+
         self.data = pandas.read_csv(self.filename)
         self.data.sort_values(by=['PostingDate']) # since ads not in order as they should be
-        self.ngrams = [3, 4, 5]
+        self.num_ads = len(self.data.index)
+        self.cluster_graph = nx.DiGraph()
+        self.hashes = hash_family()
 
 
     def preprocess_ad(self, ad):
@@ -70,21 +65,17 @@ class data():
 
     def find_idf(self):
         print('Finding idf...')
-        idf = Counter()
+        self.idf = Counter()
         for _, row in self.data.iterrows():
             ad_text = self.preprocess_ad(row[DESCRIPTION])
             for ngram in self.ngrams:
                 tokens = list(zip(*[ad_text[i:] for i in range(ngram)]))
 
                 for phrase in set(tokens):
-                    idf[phrase] += 1
+                    self.idf[phrase] += 1
 
-        N = len(self.data.index)
-        for phrase, doc_freq in idf.items():
-            idf[phrase] = math.log10(N/idf[phrase])
-
-        self.idf = idf
-        print('finished idf')
+        for phrase, doc_freq in self.idf.items():
+            self.idf[phrase] = math.log10(self.num_ads/self.idf[phrase])
 
 
     def calc_tfidf(self, ad_text):
@@ -102,44 +93,65 @@ class data():
         return scores[:self.num_phrases]
 
 
-    def process_data(self):
-        print('Processing ads...')
+    def find_related_clusters(self, phrases, ad_id):
+        related_clusters = [Counter() for _ in phrases]
+        # hash phrase for all k hash functions, find which clusters are related
+        cluster_type = 'chain'
+        cluster_id = self.cluster_graph.number_of_nodes()
+        for i, phrase in enumerate(phrases):
+            for h, table in zip(self.hashes.hash_functions, self.hashes.hash_tables):
+                for cluster in table[h[phrase]]:
+                    related_clusters[i][cluster] += 1
+                    # if all phrases map to same cluster, then text is identical whp
+                    if all([rel[cluster] == self.hashes.num_hash_functions for rel in related_clusters]):
+                        cluster_type = 'dense'
+                        cluster_id = cluster
 
-        def tfidf(word, document):
-            return document.count(word) / len(document) * self.idf[word]
-
-        self.find_idf()
-        self.hashes = hash_family()
-        self.ad_graph = nx.DiGraph()
-        self.cluster = []
-
-        N = len(self.data.index)
-        # assume in order of timestamp (streaming case)
-        words_used = Counter()
-        for index, row in self.data.iterrows():
-            # write graph every 1000 ads
-            if index % 1000 == 0 and index != 0:
-                print(index, '/', N)
-                with open('{}_ad_graph.pkl'.format(filename), 'wb') as f:
-                    pickle.dump(self.ad_graph, f)
-
-            ad_text = self.preprocess_ad(row[DESCRIPTION])
-            ad_id = row[AD_ID]
+        return related_clusters, cluster_type, cluster_id
 
 
-            tfidf_scores = self.calc_tfidf(ad_text)
+    def add_new_cluster(self, related_clusters, cluster_id, ad_id):
+        self.cluster_graph.add_node(cluster_id, type='dense', contains=list([ad_id]))
+        edges = []
+        for related_cluster in related_clusters:
+            edges += [(s, cluster_id) for s, num in related_cluster.items() if num >= self.hashes.hash_cutoff]
+        self.cluster_graph.add_edges_from(edges)
 
-            for score, word in tfidf_scores[:self.num_phrases]:
-                words_used[word] += 1
-                self.hashes.add_to_hash_tables_and_graph(word, ad_id, self)
-                #self.hashes.add_to_hash_tables_only(word, ad_id, self)
 
+    def process_ad(self, row):
+        ad_text = self.preprocess_ad(row[DESCRIPTION])
+        ad_id = row[AD_ID]
+
+        top_tfidf = [phrase for _, phrase in self.calc_tfidf(ad_text)]
+        related_clusters, cluster_type, cluster_id = self.find_related_clusters(top_tfidf, ad_id)
+        if cluster_type == 'chain':
+            self.add_new_cluster(related_clusters, cluster_id, ad_id)
+        else:
+            self.cluster_graph.nodes[cluster_id]['contains'].append(ad_id)
+
+        for phrase in top_tfidf:
+            self.hashes.add_to_hash_tables(phrase, cluster_id)
+
+
+    def write_cluster_graph(self):
         with open('{}_ad_graph.pkl'.format(filename), 'wb') as f:
-            pickle.dump(self.ad_graph, f)
+            pickle.dump(self.cluster_graph, f)
 
 
-        for thing in self.cluster:
-            print(thing)
+    def clustering(self):
+        self.find_idf()
+        print('Starting clustering...')
+
+        # assume in order of timestamp (streaming case)
+        for index, row in self.data.iterrows():
+            if index and not index % 1000:
+                print(index, '/', self.num_ads)
+                self.write_cluster_graph()
+
+            self.process_ad(row)
+
+        self.write_cluster_graph()
+
 
 def usage(exit_code):
     print('Usage: _ [filename]')
@@ -150,12 +162,6 @@ if __name__ == '__main__':
     if len(sys.argv) < 2:
         usage(1)
 
-    mode = sys.argv[1]
-
-    if not os.path.isdir('./plots'):
-        os.mkdir('./plots')
-
     filename = sys.argv[1]
     canadian_data = data(filename)
-
-    canadian_data.process_data()
+    canadian_data.clustering()

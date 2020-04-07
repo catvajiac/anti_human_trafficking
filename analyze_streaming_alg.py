@@ -57,21 +57,18 @@ def plot_degree_distributions(graph):
 
 
 def analyze_connected_components(graph, data):
+    print('nodes', graph.number_of_nodes())
     print("Components:", nx.number_weakly_connected_components(graph))
 
-    for i, comp in enumerate(nx.weakly_connected_components(graph)):
-        # look at data for all small clusters
-        if len(comp) > 1 and len(comp) < 1000:
-            print('NEW CLUSTER', len(comp))
+    for i, nodes in enumerate(nx.weakly_connected_components(graph)):
+        if len(nodes) < 10:
+            continue
+        for node in nodes:
+            comp = graph.nodes[node]['contains']
             cluster = data.loc[data['ad_id'].isin(comp)]
             dups_shape = cluster.pivot_table(index=['u_Description'], aggfunc='size')
-            if len(dups_shape) == 1:
-                continue
-            for i, row in cluster.iterrows():
-                print(row['u_Description'])
-                print()
-
-            print('\n\n')
+            print(cluster['u_Description'].iloc[0], '\n')
+        print('\n\n')
 
 
 def plot_posts_per_day(data):
