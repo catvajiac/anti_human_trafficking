@@ -11,13 +11,50 @@ import pandas
 import pickle
 
 from collections import Counter
+from functools import reduce
+
+from streaming_alg import data
+
+BEGIN_LATEX = r'''\documentclass[11pt]{article}
+\usepackage{listings, xcolor, soul}
+\lstset{
+  basicstyle=\ttfamily,
+  showstringspaces=false,
+  breaklines=true,
+  keywordstyle={\textit},
+  escapeinside={(*@}{@*)}
+}
+\newcommand{\ctext}[1]{
+  \begingroup
+  \sethlcolor{cyan}%
+  \hl{#1}%
+  \endgroup
+}
+\begin{document}\begin{lstlisting}'''
+
+
+END_LATEX = r'\end{lstlisting}\end{document}'
+
+COLOR = 'cyan'
+DATE = 'PostingDate'
+
+
+def merge(inp):
+    def merge_sub(li,item):
+        if li:
+            if li[-1][1] >= item[0]:
+                li[-1] = li[-1][0], max(li[-1][1],item[1])
+                return li
+        li.append(item)
+        return li
+    return reduce(merge_sub, sorted(inp), [])
 
 
 def load_data(pkl_filename, data_filename):
     print('Loading graph...')
     graph = pickle.load(open(pkl_filename, 'rb'))
-    data = pandas.read_csv(data_filename, encoding='utf-8')
-    return data, graph
+    csv_data = data(data_filename)
+    return csv_data, graph
 
 
 def plot_degree_distributions(graph):
@@ -57,32 +94,51 @@ def plot_degree_distributions(graph):
 
 
 def analyze_connected_components(graph, data):
-    print('nodes', graph.number_of_nodes())
-    print("Components:", nx.number_weakly_connected_components(graph))
+    print('Nodes:', graph.number_of_nodes())
+    print("Components:", nx.number_weakly_connected_components(graph), '\n')
 
     for i, nodes in enumerate(nx.weakly_connected_components(graph)):
-        if len(nodes) < 10:
+        if len(nodes) < 2:
             continue
         for node in nodes:
             comp = graph.nodes[node]['contains']
-            cluster = data.loc[data['ad_id'].isin(comp)]
-            dups_shape = cluster.pivot_table(index=['u_Description'], aggfunc='size')
-            print(cluster['u_Description'].iloc[0], '\n')
-        print('\n\n')
+            ad_text = data.data.loc[data.data['ad_id'].isin(comp)]['u_Description'].iloc[0]
+            #ad_text = ad_text.replace('\', '\textbackslash ')
+            ad_text = ad_text.replace('$', '')
+            ad_text = ad_text.replace('{', '')
+            ad_text = ad_text.replace('}', '')
+            ad_text = ad_text.replace('(*@', '')
+            ad_text = ad_text.replace('@*)', '')
+            ad_text = ad_text.replace('&', '')
+            ad_text = data.preprocess_ad(ad_text)
+            intervals = [(start, end) for _, _, start, end in data.calc_tfidf(ad_text)]
+            for start, end in merge(intervals)[::-1]:
+                start_highlight = '(*@ \ctext{{'.format(COLOR)
+                end_highlight = r'}@*)'
+                ad_text.insert(start, start_highlight)
+                ad_text.insert(end+1, end_highlight)
+            print(len(comp))
+            print(' '.join(ad_text))
+            print('\n')
+        print(r'(*@\newpage @*)')
+
+    print(END_LATEX)
 
 
 def plot_posts_per_day(data):
-    data['PostingDate'] = pandas.to_datetime(data['PostingDate'])
-    groups = data.groupby(data['PostingDate'].dt.date).size()
+    data.data[DATE] = pandas.to_datetime(data.data[DATE])
+    groups = data.data.groupby(data.data[DATE].dt.date).size()
     plt.title('Number of posts/day')
     groups.plot.bar(rot=80)
     plt.show()
 
 
 if __name__ == '__main__':
-    graph_pkl_filename = sys.argv[1]
-    data_filename = sys.argv[2]
-    data, graph = load_data(graph_pkl_filename, data_filename)
+    prefix = sys.argv[1]
+    graph_pkl_filename = './pkl_files/{}_ad_graph.pkl'.format(prefix)
+    data_csv_filename = './data/{}.csv'.format(prefix)
+    print(BEGIN_LATEX)
+    data, graph = load_data(graph_pkl_filename, data_csv_filename)
 
     #plot_degree_distributions(graph)
     #plot_posts_per_day(data)
