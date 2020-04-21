@@ -60,7 +60,7 @@ class data():
 
 
     def preprocess_ad(self, ad):
-        return word_tokenize(''.join([c for c in ad if c.isalnum() or c==' ']))
+        return word_tokenize(ad)
 
 
     def find_idf(self):
@@ -81,16 +81,29 @@ class data():
     def calc_tfidf(self, ad_text):
         def tfidf(word, document):
             tokens = list(zip(*[document[i:] for i in range(len(word))]))
-            return tokens.count(word) / len(tokens) * self.idf[word], word
+            return tokens.count(word) / len(tokens) * self.idf[word]
 
         scores = []
         for ngram in self.ngrams:
             tokens = list(zip(*[ad_text[i:] for i in range(ngram)]))
-            for phrase in tokens:
-                scores.append(tfidf(tuple(phrase), ad_text))
+            for index, phrase in enumerate(tokens):
+                score = tfidf(tuple(phrase), ad_text)
+                scores.append((score, index, phrase))
 
-        scores.sort(reverse=True)
-        return scores[:self.num_phrases]
+        scores.sort()
+        # filter scores so that they take non-overlapping ngrams
+        filtered_scores = []
+        used_indices = set()
+        while len(filtered_scores) < self.num_phrases:
+            score, index, phrase = scores.pop()
+            for i in range(index, index + len(phrase)):
+                if i in used_indices:
+                    continue
+
+            filtered_scores.append((score, index, phrase))
+            used_indices.update(range(index, index + len(phrase)))
+
+        return filtered_scores
 
 
     def find_related_clusters(self, phrases, ad_id):
@@ -122,7 +135,7 @@ class data():
         ad_text = self.preprocess_ad(row[DESCRIPTION])
         ad_id = row[AD_ID]
 
-        top_tfidf = [phrase for _, phrase in self.calc_tfidf(ad_text)]
+        top_tfidf = [phrase for _, _, phrase in self.calc_tfidf(ad_text)]
         related_clusters, cluster_type, cluster_id = self.find_related_clusters(top_tfidf, ad_id)
         if cluster_type == 'chain':
             self.add_new_cluster(related_clusters, cluster_id, ad_id)
