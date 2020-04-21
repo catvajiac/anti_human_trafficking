@@ -4,7 +4,9 @@
 # Usage:    ./streaming_alg.py [filename]
 
 import math
+import matplotlib.pyplot as plt
 import networkx as nx
+import numpy as np
 import os, sys
 import pandas
 import pickle
@@ -48,11 +50,11 @@ class hash_family():
 
 class data():
     def __init__(self, filename, num_phrases=5, ngrams = [3, 4, 5]):
-        self.filename = filename
+        self.filename = os.path.basename(filename).split('.')[0]
         self.num_phrases = num_phrases
         self.ngrams = ngrams
 
-        self.data = pandas.read_csv(self.filename)
+        self.data = pandas.read_csv(filename)
         self.data.sort_values(by=['PostingDate']) # since ads not in order as they should be
         self.num_ads = len(self.data.index)
         self.cluster_graph = nx.DiGraph()
@@ -60,7 +62,8 @@ class data():
 
 
     def preprocess_ad(self, ad):
-        return word_tokenize(ad)
+        #return word_tokenize(ad)
+        return word_tokenize(''.join([c.lower() for c in ad if c.isalnum() or c == ' ']))
 
 
     def find_idf(self):
@@ -76,6 +79,8 @@ class data():
 
         for phrase, doc_freq in self.idf.items():
             self.idf[phrase] = math.log10(self.num_ads/self.idf[phrase])
+
+        pickle.dump(self.idf, open('pkl_files/{}.pkl'.format(self.filename), 'wb'))
 
 
     def calc_tfidf(self, ad_text):
@@ -96,9 +101,8 @@ class data():
         used_indices = set()
         while len(filtered_scores) < self.num_phrases:
             score, index, phrase = scores.pop()
-            for i in range(index, index + len(phrase)):
-                if i in used_indices:
-                    continue
+            if any([i in used_indices for i in range(index, index+len(phrase))]):
+                continue
 
             filtered_scores.append((score, index, phrase))
             used_indices.update(range(index, index + len(phrase)))
@@ -136,6 +140,7 @@ class data():
         ad_id = row[AD_ID]
 
         top_tfidf = [phrase for _, _, phrase in self.calc_tfidf(ad_text)]
+        print(top_tfidf)
         related_clusters, cluster_type, cluster_id = self.find_related_clusters(top_tfidf, ad_id)
         if cluster_type == 'chain':
             self.add_new_cluster(related_clusters, cluster_id, ad_id)
@@ -147,7 +152,7 @@ class data():
 
 
     def write_cluster_graph(self):
-        with open('{}_ad_graph.pkl'.format(filename), 'wb') as f:
+        with open('pkl_files/{}_ad_graph.pkl'.format(self.filename), 'wb') as f:
             pickle.dump(self.cluster_graph, f)
 
 
@@ -164,6 +169,28 @@ class data():
             self.process_ad(row)
 
         self.write_cluster_graph()
+        #self.visualize_buckets()
+
+    def visualize_buckets(self):
+        save_path = './plots/streaming_alg/' + self.filename
+        print(save_path)
+        if not os.path.isdir(save_path):
+            os.makedirs(save_path)
+
+        length = self.cluster_graph.number_of_nodes()
+        for index in range(self.hashes.num_hash_functions):
+            hash_table = self.hashes.hash_tables[index]
+            m = np.zeros((len(hash_table), length))
+            for i, (_, cluster_ids) in enumerate(hash_table.items()):
+                m[i, cluster_ids] = 1
+
+            plt.imshow(m, interpolation='nearest', aspect='auto')
+            plt.tight_layout()
+            plt.title('Hash table: {}'.format(index))
+            plt.xlabel('cluster ids')
+            plt.ylabel('buckets, sorted by first access time')
+            plt.savefig('{}/{}_hash_visual.png'.format( save_path, index))
+            plt.clf()
 
 
 def usage(exit_code):
