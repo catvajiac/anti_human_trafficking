@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Author: Catalina Vajiac
 # Purpose: catchall script to analyze output from streaming_alg.py
-# Usage: ./analyze_streaming_alg.py [graph_pkl] [original_csv]
+# Usage: ./analyze_streaming_alg.py [name of file]
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -12,6 +12,7 @@ import pickle
 
 from collections import Counter
 from functools import reduce
+from sortedcontainers import SortedList
 
 from streaming_alg import data
 
@@ -42,7 +43,7 @@ DATE = 'PostingDate'
 def merge(inp):
     def merge_sub(li,item):
         if li:
-            if li[-1][1] >= item[0]:
+            if li[-1][1] >= item[0] - 1:
                 li[-1] = li[-1][0], max(li[-1][1],item[1])
                 return li
         li.append(item)
@@ -93,36 +94,38 @@ def plot_degree_distributions(graph):
     plt.show()
 
 
+def remove_punctuation(text):
+    for symbol in ['$', '{', '}', '(*@', '@*)', '&']:
+        text.replace(symbol, '')
+    return text
+
+
+def highlight_ad_text(data, text):
+    text = text.split()
+    intervals = [(index, index+len(phrase)) for _, index, phrase in data.calc_tfidf(text)]
+    for start, end in merge(intervals):
+        print(start, end)
+        start_highlight = '(*@ \ctext{{'.format(COLOR)
+        end_highlight = r'}@*)'
+        text.insert(start, start_highlight)
+        text.insert(end+1, end_highlight)
+
+    return ' '.join(text)
+
+
 def analyze_connected_components(graph, data):
     print('Nodes:', graph.number_of_nodes())
     print("Components:", nx.number_weakly_connected_components(graph), '\n')
 
     for i, nodes in enumerate(nx.weakly_connected_components(graph)):
-        if len(nodes) < 2:
-            continue
         for node in nodes:
             comp = graph.nodes[node]['contains']
-            ad_text = data.data.loc[data.data['ad_id'].isin(comp)]['u_Description'].iloc[0]
-            #ad_text = ad_text.replace('\', '\textbackslash ')
-            ad_text = ad_text.replace('$', '')
-            ad_text = ad_text.replace('{', '')
-            ad_text = ad_text.replace('}', '')
-            ad_text = ad_text.replace('(*@', '')
-            ad_text = ad_text.replace('@*)', '')
-            ad_text = ad_text.replace('&', '')
-            ad_text = data.preprocess_ad(ad_text)
-            intervals = [(start, end) for _, _, start, end in data.calc_tfidf(ad_text)]
-            for start, end in merge(intervals)[::-1]:
-                start_highlight = '(*@ \ctext{{'.format(COLOR)
-                end_highlight = r'}@*)'
-                ad_text.insert(start, start_highlight)
-                ad_text.insert(end+1, end_highlight)
-            print(len(comp))
-            print(' '.join(ad_text))
-            print('\n')
+            ad_texts = data.data.loc[data.data['ad_id'].isin(comp)]['u_Description']
+            print(len(ad_texts))
+            for text in ad_texts:
+                text = highlight_ad_text(data, text)
+                print(text, '\n')
         print(r'(*@\newpage @*)')
-
-    print(END_LATEX)
 
 
 def plot_posts_per_day(data):
@@ -131,6 +134,41 @@ def plot_posts_per_day(data):
     plt.title('Number of posts/day')
     groups.plot.bar(rot=80)
     plt.show()
+
+
+def plot_phone_number(graph, data):
+    suspicious = []
+    phones = SortedList()
+    for i, nodes in enumerate(nx.weakly_connected_components(graph)):
+        num_phones = 0
+        for node in nodes:
+            cluster_node = graph.nodes[node]['contains']
+            ads = data.data.loc[data.data['ad_id'].isin(cluster_node)]
+            num_phones += ads['e_PhoneNumbers'].count()
+
+        phones.add(num_phones)
+        if num_phones > 100:
+            suspicious.append(i)
+
+    plt.scatter(list(range(len(phones))), phones)
+    plt.savefig('plot_phone.png')
+    return suspicious
+
+
+def peek_clusters(graph, data, components):
+    for i, component in enumerate(nx.weakly_connected_components(graph)):
+        if i not in components:
+            continue
+
+        for cluster_node in component:
+            ad_ids = graph.nodes[cluster_node]['contains']
+            ad_texts = data.data.loc[data.data['ad_id'].isin(ad_ids)]['u_Description']
+
+            for text in ad_texts:
+                print(text)
+                print('\n')
+
+        print(r'(*@\newpage @*)')
 
 
 if __name__ == '__main__':
@@ -142,4 +180,8 @@ if __name__ == '__main__':
 
     #plot_degree_distributions(graph)
     #plot_posts_per_day(data)
+    data.find_idf()
+    #sus = plot_phone_number(graph, data)
     analyze_connected_components(graph, data)
+    #peek_clusters(graph, data, sus)
+    print(END_LATEX)
