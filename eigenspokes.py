@@ -71,12 +71,13 @@ def flip_svd_order(u, s, v):
 # main class
 
 class find_spokes():
-    def __init__(self, filename, pkl_path='./pkl_files', plots_path='./plots/eigenspokes', zero_cutoff=1e-2):
+    def __init__(self, filename, zero_cutoff=1e-2, k=9):
         self.read_data(filename)
         self.filename = os.path.basename(filename).split('.')[0]
-        self.pkl_path = './pkl_files'
-        self.plots_path = '{}/{}'.format(plots_path, self.filename)
         self.zero_cutoff = 1e-2
+        self.k = k
+        self.pkl_path = './pkl_files'
+        self.plots_path = './plots/eigenspokes/{}_k-{}'.format(self.filename, self.k)
 
 
     def read_data(self, filename):
@@ -93,7 +94,7 @@ class find_spokes():
 
     def svd(self, use_pkl=True):
         ''' returns tuple: (u, s, v) '''
-        svd_pkl_filename = '{}/{}_svd.pkl'.format(self.pkl_path, self.filename)
+        svd_pkl_filename = '{}/{}_svd_k-{}.pkl'.format(self.pkl_path, self.filename, self.k)
         if use_pkl and os.path.exists(svd_pkl_filename):
             print('Using SVD pkl file...')
             self.u, self.s, self.v = pickle.load(open(svd_pkl_filename, 'rb'))
@@ -101,7 +102,7 @@ class find_spokes():
 
         print('Running SVD...')
         array = nx.to_scipy_sparse_matrix(self.graph, dtype='float64')
-        self.u, self.s, self.v = flip_svd_order(*sp.sparse.linalg.svds(array, k=9, which='LM'))
+        self.u, self.s, self.v = flip_svd_order(*sp.sparse.linalg.svds(array, k=self.k, which='LM'))
         if use_pkl:
             pickle.dump((self.u, self.s, self.v), open(svd_pkl_filename, 'wb'))
 
@@ -142,7 +143,7 @@ class find_spokes():
 
     def find_spokes(self, use_pkl=True):
         ''' Find spokes - for now just looks at top 9 eigenvectors for ease of plotting later '''
-        spokes_pkl_filename = '{}/{}_spokes.pkl'.format(self.pkl_path, self.filename)
+        spokes_pkl_filename = '{}/{}_spokes_k-{}.pkl'.format(self.pkl_path, self.filename, self.k)
         if use_pkl and os.path.exists(spokes_pkl_filename):
             print('Using spokes pkl file...')
             self.spokes = pickle.load(open(spokes_pkl_filename, 'rb'))
@@ -150,7 +151,7 @@ class find_spokes():
 
         print('Finding spokes...')
         self.spokes = []
-        for axis in range(9):
+        for axis in range(self.k):
             if self.u.shape[0] <= axis:
                 break
             scores = [(i, abs(x)) for i, x in enumerate(self.u[:, axis])]
@@ -163,10 +164,10 @@ class find_spokes():
 
     def refine_pairwise_spokes(self):
         ''' only keeps spokes that create useful EE plots '''
-        data = {(x, y): defaultdict(list) for x, y in product(range(9), repeat=2)}
+        data = {(x, y): defaultdict(list) for x, y in product(range(self.k), repeat=2)}
 
-        for x_axis in range(9):
-            for y_axis in range(9):
+        for x_axis in range(self.k):
+            for y_axis in range(self.k):
                 if self.u.shape[0] <= x_axis or self.u.shape[0] <= y_axis:
                     data.pop((x_axis, y_axis))
                     continue
@@ -189,8 +190,8 @@ class find_spokes():
             singular vectors in the set '''
         max_sv = max([max(x, y) for x, y in self.data]) + 1
         singular_vectors = set()
-        for x in range(9):
-            if sum(([any(self.data[x, y]['spoke']) for y in range(max_sv)])) == 9:
+        for x in range(self.k):
+            if sum(([any(self.data[x, y]['spoke']) for y in range(max_sv)])) == self.k:
                 singular_vectors |= set([x])
                 continue
             spokes = set([y for y in range(max_sv) if y != x and len(self.data[x, y]['spoke'])])
@@ -212,6 +213,8 @@ class find_spokes():
         for x_axis in range(9):
             f.suptitle('u{} EE plots with refined spokes'.format(x_axis))
             for y_axis, ax in enumerate(axes):
+                if x_axis >= self.k or y_axis >= self.k or x_axis == y_axis:
+                    continue
                 x = self.data[x_axis, y_axis]['points'][0]
                 y = self.data[x_axis, y_axis]['points'][1]
                 ax.scatter(x, y)
@@ -229,6 +232,9 @@ class find_spokes():
 
 
     def plot_u(self):
+        if not os.path.exists(self.plots_path):
+            os.makedirs(self.plots_path)
+
         self.filter_singular_vectors()
         plt.imshow(self.u[:,0:9], interpolation='nearest', aspect='auto')
         plt.tight_layout()
