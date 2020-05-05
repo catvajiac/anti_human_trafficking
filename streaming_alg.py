@@ -4,6 +4,7 @@
 # Usage:    ./streaming_alg.py [filename]
 
 import math
+import heapq
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
@@ -23,7 +24,7 @@ AD_ID = 'ad_id'
 
 
 class hash_family():
-    def __init__(self, num_hash_functions=256, buckets_in_hash=5000):
+    def __init__(self, num_hash_functions=128, buckets_in_hash=250):
         self.num_hash_functions = num_hash_functions
         self.hash_cutoff = num_hash_functions / 2
         self.buckets_in_hash = buckets_in_hash
@@ -67,6 +68,11 @@ class data():
 
 
     def find_idf(self):
+        save_path = 'pkl_files/{}_idf.pkl'.format(self.filename)
+        if os.path.exists(save_path):
+            self.idf = pickle.load(open(save_path, 'rb'))
+            return
+
         print('Finding idf...')
         self.idf = Counter()
         for _, row in self.data.iterrows():
@@ -80,7 +86,7 @@ class data():
         for phrase, doc_freq in self.idf.items():
             self.idf[phrase] = math.log10(self.num_ads/self.idf[phrase])
 
-        pickle.dump(self.idf, open('pkl_files/{}.pkl'.format(self.filename), 'wb'))
+        pickle.dump(self.idf, open(save_path, 'wb'))
 
 
     def calc_tfidf(self, ad_text):
@@ -95,13 +101,25 @@ class data():
                 score = tfidf(tuple(phrase), ad_text)
                 scores.append((score, index, phrase))
 
+        #return heapq.nlargest(self.num_phrases, scores)
+
+
         scores.sort()
         # filter scores so that they take non-overlapping ngrams
         filtered_scores = []
         used_indices = set()
+        deleted_phrases = []
         while len(filtered_scores) < self.num_phrases:
+            if not len(scores) and not len(deleted_phrases):
+                break
+
+            if not len(scores):
+                filtered_scores.append(deleted_phrases.pop(0))
+                continue
+
             score, index, phrase = scores.pop()
             if any([i in used_indices for i in range(index, index+len(phrase))]):
+                deleted_phrases.append((score, index, phrase))
                 continue
 
             filtered_scores.append((score, index, phrase))
@@ -111,27 +129,30 @@ class data():
 
 
     def find_related_clusters(self, phrases, ad_id):
-        related_clusters = [Counter() for _ in phrases]
+        # return dict of related clusters, cluster type, and cluster id
         # hash phrase for all k hash functions, find which clusters are related
-        cluster_type = 'chain'
-        cluster_id = self.cluster_graph.number_of_nodes()
-        for i, phrase in enumerate(phrases):
+        related_clusters = defaultdict(lambda: Counter())
+        for phrase in phrases:
             for h, table in zip(self.hashes.hash_functions, self.hashes.hash_tables):
                 for cluster in table[h[phrase]]:
-                    related_clusters[i][cluster] += 1
-                    # if all phrases map to same cluster, then text is identical whp
-                    if all([rel[cluster] == self.hashes.num_hash_functions for rel in related_clusters]):
-                        cluster_type = 'dense'
-                        cluster_id = cluster
+                    related_clusters[cluster][phrase] += 1
 
-        return related_clusters, cluster_type, cluster_id
+        for cluster, phrase_count in related_clusters.copy().items():
+            if all([count == self.hashes.num_hash_functions for _, count in phrase_count.items()]):
+                return {cluster: phrase_count}, 'dense', cluster
+
+            if all([count <= self.hashes.num_hash_functions/2 for _, count in phrase_count.items()]):
+                related_clusters.pop(cluster)
+
+        return related_clusters, 'chain', self.cluster_graph.number_of_nodes()
 
 
     def add_new_cluster(self, related_clusters, cluster_id, ad_id):
         self.cluster_graph.add_node(cluster_id, type='dense', contains=list([ad_id]))
-        edges = []
-        for related_cluster in related_clusters:
-            edges += [(s, cluster_id) for s, num in related_cluster.items() if num >= self.hashes.hash_cutoff]
+        edges = set()
+        for s, phrase_count in related_clusters.items():
+            edges.update(set([(s, cluster_id) for _, num in phrase_count.items()]))
+
         self.cluster_graph.add_edges_from(edges)
 
 
@@ -140,7 +161,6 @@ class data():
         ad_id = row[AD_ID]
 
         top_tfidf = [phrase for _, _, phrase in self.calc_tfidf(ad_text)]
-        print(top_tfidf)
         related_clusters, cluster_type, cluster_id = self.find_related_clusters(top_tfidf, ad_id)
         if cluster_type == 'chain':
             self.add_new_cluster(related_clusters, cluster_id, ad_id)
@@ -169,9 +189,10 @@ class data():
             self.process_ad(row)
 
         self.write_cluster_graph()
-        #self.visualize_buckets()
+        self.visualize_buckets()
 
     def visualize_buckets(self):
+        print('Plotting hash tables...')
         save_path = './plots/streaming_alg/' + self.filename
         print(save_path)
         if not os.path.isdir(save_path):
