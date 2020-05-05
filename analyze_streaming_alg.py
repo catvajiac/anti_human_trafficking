@@ -17,7 +17,7 @@ from sortedcontainers import SortedList
 from streaming_alg import data
 
 BEGIN_LATEX = r'''\documentclass[11pt]{article}
-\usepackage{listings, xcolor, soul}
+\usepackage{listings, xcolor, soul, graphicx}
 \lstset{
   basicstyle=\ttfamily,
   showstringspaces=false,
@@ -31,14 +31,33 @@ BEGIN_LATEX = r'''\documentclass[11pt]{article}
   \hl{#1}%
   \endgroup
 }
-\begin{document}\begin{lstlisting}'''
+\begin{document}'''
 
 
-END_LATEX = r'\end{lstlisting}\end{document}'
+END_LATEX = r'\end{document}'
+
 
 COLOR = 'cyan'
 DATE = 'PostingDate'
 
+def jaccard_sim(str1, str2):
+    a = set(str1.split())
+    b = set(str2.split())
+    c = a.intersection(b)
+    return float(len(c)) / (len(a) + len(b) - len(c))
+
+
+def cluster_quality(graph, data):
+    texts = []
+    for cluster1, cluster2 in graph.edges:
+        ad_id1 = graph.nodes[cluster1]['contains']
+        ad_id2 = graph.nodes[cluster2]['contains']
+        text1 = data.data.loc[data.data['ad_id'].isin(ad_id1)]['u_Description'].iloc[0]
+        text2 = data.data.loc[data.data['ad_id'].isin(ad_id2)]['u_Description'].iloc[0]
+        texts.append((text1, text2))
+
+    sim = sum([jaccard_sim(ad1, ad2) for ad1, ad2 in texts]) / len(texts)
+    return sim
 
 def merge(inp):
     def merge_sub(li,item):
@@ -95,37 +114,44 @@ def plot_degree_distributions(graph):
 
 
 def remove_punctuation(text):
-    for symbol in ['$', '{', '}', '(*@', '@*)', '&']:
-        text.replace(symbol, '')
+    for symbol in '{}&%@/#!\\_[]$':
+        text = text.replace(symbol, '.')
     return text
 
 
 def highlight_ad_text(data, text):
-    text = text.split()
+    text = remove_punctuation(text).split()
     intervals = [(index, index+len(phrase)) for _, index, phrase in data.calc_tfidf(text)]
     for start, end in merge(intervals):
-        print(start, end)
-        start_highlight = '(*@ \ctext{{'.format(COLOR)
-        end_highlight = r'}@*)'
+        start_highlight = '\ctext{{'.format(COLOR)
+        end_highlight = r'}'
         text.insert(start, start_highlight)
         text.insert(end+1, end_highlight)
 
     return ' '.join(text)
 
 
-def analyze_connected_components(graph, data):
+def analyze_connected_components(graph, data, filename, clusters=None):
     print('Nodes:', graph.number_of_nodes())
     print("Components:", nx.number_weakly_connected_components(graph), '\n')
 
+    print(max([len(nodes) for nodes in nx.weakly_connected_components(graph)]))
     for i, nodes in enumerate(nx.weakly_connected_components(graph)):
+        if clusters is not None and i not in clusters:
+            continue
+        # skip is cluster is small or is complete (for now)
+        if len(nodes) < 3 or not nx.complement(nx.Graph(graph.subgraph(nodes))).number_of_edges():
+            continue
+        print('meta-cluster id:', i, 'quality:', cluster_quality(graph.subgraph(nodes), data))
+        print(r'\begin{center}')
+        print(r'\includegraphics[width=4in]{./plots/analyze_streaming_alg/'+filename+'/'+str(i)+'.png}')
+        print(r'\end{center}')
         for node in nodes:
             comp = graph.nodes[node]['contains']
             ad_texts = data.data.loc[data.data['ad_id'].isin(comp)]['u_Description']
-            print(len(ad_texts))
-            for text in ad_texts:
-                text = highlight_ad_text(data, text)
-                print(text, '\n')
-        print(r'(*@\newpage @*)')
+            text = remove_punctuation(ad_texts.iloc[0])
+            print(node, text, '\n')
+        print(r'\newpage ')
 
 
 def plot_posts_per_day(data):
@@ -166,9 +192,23 @@ def peek_clusters(graph, data, components):
 
             for text in ad_texts:
                 print(text)
-                print('\n')
+                print('~\\ \n')
 
         print(r'(*@\newpage @*)')
+
+
+def draw_clusters(graph, data, filename):
+    print('Drawing clusters...')
+    save_path = './plots/analyze_streaming_alg/{}'.format(filename)
+    if not os.path.isdir(save_path):
+        os.makedirs(save_path)
+
+    for i, component in enumerate(nx.weakly_connected_components(graph)):
+        subgraph = graph.subgraph(component)
+        plt.title('Component {}'.format(i))
+        nx.draw_shell(subgraph, with_labels=True)
+        plt.savefig('{}/{}'.format(save_path, i))
+        plt.clf()
 
 
 if __name__ == '__main__':
@@ -182,6 +222,11 @@ if __name__ == '__main__':
     #plot_posts_per_day(data)
     data.find_idf()
     #sus = plot_phone_number(graph, data)
-    analyze_connected_components(graph, data)
+    #good_clusters = [18, 40, 107, 71, 158, 260, 309, 559, 732, 865, 6114]
+    #bad_clusters = [31, 653, 1372, 937]
+    #analyze_connected_components(graph, data, prefix, good_clusters)
+    #analyze_connected_components(graph, data, prefix, bad_clusters)
+    draw_clusters(graph, data, prefix)
+    analyze_connected_components(graph, data, prefix)
     #peek_clusters(graph, data, sus)
     print(END_LATEX)
