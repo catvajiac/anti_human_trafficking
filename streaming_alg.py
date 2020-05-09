@@ -12,19 +12,22 @@ import os, sys
 import pandas
 import pickle
 import random
+import time
 
 from collections import Counter, defaultdict
 from datetime import datetime
 from nltk.tokenize import word_tokenize
+from sortedcontainers import SortedList
 
 
-DESCRIPTION = 'u_Description'
+#DESCRIPTION = 'u_Description'
+DESCRIPTION = 'body'
 TIMESTAMP = 'PostingDate'
 AD_ID = 'ad_id'
 
 
 class hash_family():
-    def __init__(self, num_hash_functions=128, buckets_in_hash=250):
+    def __init__(self, num_hash_functions=128, buckets_in_hash=1000):
         self.num_hash_functions = num_hash_functions
         self.hash_cutoff = num_hash_functions / 2
         self.buckets_in_hash = buckets_in_hash
@@ -38,7 +41,7 @@ class hash_family():
         for h, table in zip(self.hash_functions, self.hash_tables):
             if to_add not in table[h[to_hash]]:
                 table[h[to_hash]].append(to_add)
-            if len(table[h[to_hash]]) >= 1000:
+            if len(table[h[to_hash]]) >= 500:
                 table[h[to_hash]].pop(0)
 
 
@@ -56,7 +59,7 @@ class data():
         self.ngrams = ngrams
 
         self.data = pandas.read_csv(filename)
-        self.data.sort_values(by=['PostingDate']) # since ads not in order as they should be
+        #self.data.sort_values(by=['PostingDate']) # since ads not in order as they should be
         self.num_ads = len(self.data.index)
         self.cluster_graph = nx.DiGraph()
         self.hashes = hash_family()
@@ -64,8 +67,16 @@ class data():
 
     def preprocess_ad(self, ad):
         #return word_tokenize(ad)
-        return word_tokenize(''.join([c.lower() for c in ad if c.isalnum() or c == ' ']))
+        try:
+            return word_tokenize(''.join([c.lower() for c in ad if c.isalnum() or c == ' ']))
+        except:
+            return word_tokenize('')
 
+    def get_tokens(self, ad_text):
+        ad_text = self.preprocess_ad(ad_text)
+        for ngram in self.ngrams:
+            for token in list(zip(*[ad_text[i:] for i in range(ngram)])):
+                yield token
 
     def find_idf(self):
         save_path = 'pkl_files/{}_idf.pkl'.format(self.filename)
@@ -76,35 +87,30 @@ class data():
         print('Finding idf...')
         self.idf = Counter()
         for _, row in self.data.iterrows():
-            ad_text = self.preprocess_ad(row[DESCRIPTION])
-            for ngram in self.ngrams:
-                tokens = list(zip(*[ad_text[i:] for i in range(ngram)]))
-
-                for phrase in set(tokens):
-                    self.idf[phrase] += 1
+            for phrase in self.get_tokens(row[DESCRIPTION]):
+                self.idf[phrase] += 1
 
         for phrase, doc_freq in self.idf.items():
             self.idf[phrase] = math.log10(self.num_ads/self.idf[phrase])
 
         pickle.dump(self.idf, open(save_path, 'wb'))
 
+    def tfidf(self, word, document):
+        tokens = list(zip(*[document[i:] for i in range(len(word))]))
+        return tokens.count(word) / len(tokens) * self.idf[word]
 
-    def calc_tfidf(self, ad_text):
-        def tfidf(word, document):
-            tokens = list(zip(*[document[i:] for i in range(len(word))]))
-            return tokens.count(word) / len(tokens) * self.idf[word]
+    def calc_tfidf(self, ad_text, all=False):
 
         scores = []
         for ngram in self.ngrams:
             tokens = list(zip(*[ad_text[i:] for i in range(ngram)]))
             for index, phrase in enumerate(tokens):
-                score = tfidf(tuple(phrase), ad_text)
+                score = self.tfidf(tuple(phrase), ad_text)
                 scores.append((score, index, phrase))
 
-        #return heapq.nlargest(self.num_phrases, scores)
-
-
         scores.sort()
+        if all:
+            return scores
         # filter scores so that they take non-overlapping ngrams
         filtered_scores = []
         used_indices = set()
@@ -177,18 +183,21 @@ class data():
 
 
     def clustering(self):
+        t = time.time()
         self.find_idf()
+        print('Finished idf in time:', time.time() - t)
         print('Starting clustering...')
 
         # assume in order of timestamp (streaming case)
         for index, row in self.data.iterrows():
             if index and not index % 1000:
-                print(index, '/', self.num_ads)
+                print(index, '/', self.num_ads, 'time', time.time() - t)
                 self.write_cluster_graph()
 
             self.process_ad(row)
 
         self.write_cluster_graph()
+        print('Finished clustering!', time.time() - t)
         self.visualize_buckets()
 
     def visualize_buckets(self):
