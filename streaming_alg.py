@@ -21,21 +21,18 @@ from nltk.tokenize import word_tokenize
 from sortedcontainers import SortedList
 
 
-DESCRIPTION = 'u_Description'
-#DESCRIPTION = 'body'
-TIMESTAMP = 'PostingDate'
-AD_ID = 'ad_id'
-
-
 class hash_family():
-    def __init__(self, num_hash_functions=64, buckets_in_hash=1000):
+    def __init__(self, num_hash_functions=32, buckets_in_hash=1000):
         self.num_hash_functions = num_hash_functions
         self.hash_cutoff = num_hash_functions / 2
+        self.duplicate_cutoff = num_hash_functions * 3 / 4
         self.buckets_in_hash = buckets_in_hash
 
         random_generator = lambda: random.randrange(buckets_in_hash)
         self.hash_functions = [defaultdict(random_generator) for _ in range(num_hash_functions)]
         self.hash_tables = [defaultdict(list) for _ in range(num_hash_functions)]
+        self.marked = set()
+        self.max_bucket = 0
 
 
     def get_hashes(self):
@@ -45,12 +42,15 @@ class hash_family():
 
 
     def add_to_hash_tables(self, to_hash, to_add):
-        # TODO: SortedList? queue? no popping front, only pop booty
         for h, table in zip(self.hash_functions, self.hash_tables):
+            table[h[to_hash]] = list(set([val for val in table[h[to_hash]] if val not in self.marked]))
             if to_add not in table[h[to_hash]]:
                 table[h[to_hash]].append(to_add)
-            if len(table[h[to_hash]]) >= 1000:
+
+            if len(table[h[to_hash]]) > 100:
                 table[h[to_hash]].pop(0)
+
+            self.max_bucket = max(self.max_bucket, len(table[h[to_hash]]))
 
 
     def pretty_print(self):
@@ -60,15 +60,22 @@ class hash_family():
                 print('  ', bucket, ':', ' '.join(map(str, elements)))
 
 
+
 class data():
-    def __init__(self, filename, num_phrases=5, ngrams = [3, 4, 5]):
+    def __init__(self, filename, num_phrases=5, ngrams = [2, 3]):
         self.filename = os.path.basename(filename).split('.')[0]
+        self.time_filename = self.filename + '_time.txt'
         self.num_phrases = num_phrases
         self.ngrams = ngrams
         self.time = 0
+        self.description = 'u_Description'
+        self.ad_id = 'ad_id'
 
         self.data = pandas.read_csv(filename)
-        self.data.sort_values(by=['PostingDate']) # since ads not in order as they should be
+        if 'PostingDate' in self.data.columns:
+            self.data.sort_values(by=['PostingDate']) # since ads not in order as they should be
+        else:
+            self.description = 'body'
         self.num_ads = len(self.data.index)
         self.cluster_graph = nx.DiGraph()
         self.hashes = hash_family()
@@ -96,7 +103,7 @@ class data():
         print('Finding idf...')
         self.idf = Counter()
         for _, row in self.data.iterrows():
-            for phrase in self.get_tokens(row[DESCRIPTION]):
+            for phrase in self.get_tokens(row[self.description]):
                 self.idf[phrase] += 1
 
         for phrase, doc_freq in self.idf.items():
@@ -158,33 +165,35 @@ class data():
                     related_clusters[cluster][phrase] += 1
 
         for cluster, phrase_count in related_clusters.copy().items():
-            if all([count == self.hashes.num_hash_functions for _, count in phrase_count.items()]):
-                return {cluster: phrase_count}, 'dense', cluster
+            if all([count >= self.hashes.hash_cutoff for _, count in phrase_count.items()]):
+                return {}, 'duplicate', cluster
 
-            if all([count <= self.hashes.num_hash_functions/2 for _, count in
-                phrase_count.items()]):
+            if all([count <= self.hashes.hash_cutoff for _, count in phrase_count.items()]):
                 related_clusters.pop(cluster)
 
         self.time += (time.time() - t)
-        return related_clusters, 'chain', self.cluster_graph.number_of_nodes()
+        cluster_id = self.cluster_graph.number_of_nodes()
+        self.hashes.marked.update(related_clusters)
+        return related_clusters, 'chain', cluster_id
 
 
     def add_new_cluster(self, related_clusters, cluster_id, ad_id):
-        self.cluster_graph.add_node(cluster_id, type='dense', contains=list([ad_id]))
-        self.cluster_graph.add_edges_from([(s, cluster_id) for s in related_clusters])
+        self.cluster_graph.add_node(cluster_id, contains=list([ad_id]))
+        self.cluster_graph.add_edges_from([(rel, cluster_id) for rel in related_clusters])
 
 
     def process_ad(self, row):
-        ad_text = self.preprocess_ad(row[DESCRIPTION])
-        ad_id = row[AD_ID]
+        ad_text = self.preprocess_ad(row[self.description])
+        ad_id = row[self.ad_id]
 
         top_tfidf = [phrase for _, _, phrase in self.calc_tfidf(ad_text)]
         related_clusters, cluster_type, cluster_id = self.find_related_clusters(top_tfidf, ad_id)
 
-        if cluster_type == 'chain':
-            self.add_new_cluster(related_clusters, cluster_id, ad_id)
-        else:
+        if cluster_type == 'duplicate':
             self.cluster_graph.nodes[cluster_id]['contains'].append(ad_id)
+            return
+
+        self.add_new_cluster(related_clusters, cluster_id, ad_id)
 
         for phrase in top_tfidf:
             self.hashes.add_to_hash_tables(phrase, cluster_id)
@@ -204,15 +213,20 @@ class data():
         # assume in order of timestamp (streaming case)
         for index, row in self.data.iterrows():
             if index and not index % 1000:
-                print(index, '/', self.num_ads, 'time', time.time() - t)
+                time_elapsed = time.time() - t
+                print(index, '/', self.num_ads, 'time', time_elapsed)
                 print('\t', self.time)
+                print('\t', 'max bucket size', self.hashes.max_bucket)
                 self.write_cluster_graph()
+                with open(self.time_filename, 'a') as f:
+                    f.write('{} {}\n'.format(index, time_elapsed))
 
             self.process_ad(row)
 
         self.write_cluster_graph()
         print('Finished clustering!', time.time() - t)
-        self.visualize_buckets()
+        #self.visualize_buckets()
+
 
     def visualize_buckets(self):
         print('Plotting hash tables...')
